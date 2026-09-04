@@ -1,9 +1,14 @@
+venv/
 __pycache__/
 *.pyc
+node_modules/
+dist/
+build/
+.DS_Store
+*.log
+.env
 
 # Regenerated vector index (rebuilt automatically from
 # data/generated/historical_cases.csv on first run)
 data/chroma/
-
-.env
-*.log
+chroma_db/
