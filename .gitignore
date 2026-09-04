@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+
+# Regenerated vector index (rebuilt automatically from
+# data/generated/historical_cases.csv on first run)
+data/chroma/
+
+.env
+*.log

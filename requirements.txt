@@ -1,0 +1,6 @@
+pandas>=2.2
+numpy>=2.0
+pydantic>=2.11
+chromadb>=1.4
+sentence-transformers>=5.2
+openai>=2.21

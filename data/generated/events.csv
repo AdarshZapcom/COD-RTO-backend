@@ -1,0 +1,5 @@
+event_id,date,pincode,courier_id,event_type,severity,description
+EVT-001,2026-08-30,560068,C07,HEAVY_RAIN,HIGH,Heavy rainfall caused delivery delays and temporary route disruption.
+EVT-002,2026-08-31,560068,C07,COURIER_DISRUPTION,MEDIUM,Temporary courier capacity issue affected delivery attempts.
+EVT-003,2026-08-20,560076,C02,LOCAL_EVENT,LOW,Local event caused temporary congestion.
+EVT-004,2026-08-15,560010,C04,WAREHOUSE_DELAY,MEDIUM,Warehouse processing delay temporarily increased delivery time.
