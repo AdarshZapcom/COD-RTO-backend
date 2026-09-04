@@ -68,6 +68,21 @@ Connects to `127.0.0.1:3306` as `root` with no password by default;
 override with `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` /
 `MYSQL_PASSWORD` / `MYSQL_DB` env vars if your setup differs.
 
+## Shared team database (Supabase)
+
+For the whole team to query the same data instead of everyone keeping
+a separate local DB, load it into the team's Supabase project:
+
+```
+set SUPABASE_DB_URL=postgresql://postgres.xxxx:PASSWORD@aws-...pooler.supabase.com:6543/postgres
+python src/build_supabase_db.py
+```
+
+Get the connection string from the Supabase dashboard: Project
+Settings -> Database -> Connection string -> URI ("Transaction
+pooler" mode). Never commit that string - it contains the DB
+password.
+
 ## Data
 
 Synthetic (no public order-level COD/RTO dataset exists at this
