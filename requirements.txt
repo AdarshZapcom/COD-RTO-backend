@@ -6,4 +6,3 @@ sentence-transformers>=5.2
 openai>=2.21
 sqlalchemy>=2.0
 pymysql>=1.1
-psycopg2-binary>=2.9
