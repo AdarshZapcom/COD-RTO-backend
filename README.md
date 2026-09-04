@@ -47,6 +47,27 @@ before running it:
 set OPENAI_API_KEY=sk-...
 ```
 
+## Local database (optional)
+
+The generated CSVs are the source of truth; both of these are optional,
+rebuildable views over the same data - neither is committed to git.
+
+SQLite (zero setup, single file):
+
+```
+python src/build_db.py
+```
+
+MySQL (needs a local MySQL server already running):
+
+```
+python src/build_mysql_db.py
+```
+
+Connects to `127.0.0.1:3306` as `root` with no password by default;
+override with `MYSQL_HOST` / `MYSQL_PORT` / `MYSQL_USER` /
+`MYSQL_PASSWORD` / `MYSQL_DB` env vars if your setup differs.
+
 ## Data
 
 Synthetic (no public order-level COD/RTO dataset exists at this
