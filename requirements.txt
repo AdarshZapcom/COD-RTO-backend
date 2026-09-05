@@ -4,3 +4,7 @@ pydantic>=2.11
 chromadb>=1.4
 sentence-transformers>=5.2
 openai>=2.21
+psycopg2-binary>=2.9
+python-dotenv>=1.0
+fastapi>=0.141
+uvicorn>=0.52

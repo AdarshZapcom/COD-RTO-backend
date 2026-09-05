@@ -37,9 +37,10 @@ from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from analytics import load_data, get_order_investigation
+from analytics import load_data, get_order_investigation, get_adhoc_investigation
 from decision_engine import DecisionResult, decide
 from case_memory import retrieve_similar_cases
+from ticketing import create_ticket
 
 OPENAI_MODEL = os.environ.get("INVESTIGATION_AGENT_MODEL", "gpt-4o-mini")
 
@@ -218,6 +219,7 @@ class InvestigationReport(BaseModel):
     most_relevant_case_id: Optional[str] = None
     retrieved_case_ids: List[str]
     timing_ms: Dict[str, float]
+    ticket_id: Optional[str] = None
 
 
 def investigate_order(data, order_id: str) -> InvestigationReport:
@@ -248,7 +250,7 @@ def investigate_order(data, order_id: str) -> InvestigationReport:
         narrative_source = "template_fallback"
     timing["narrative_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
-    return InvestigationReport(
+    report = InvestigationReport(
         order_id=order_id,
         decision=decision.decision,
         risk_level=decision.risk_level,
@@ -265,6 +267,119 @@ def investigate_order(data, order_id: str) -> InvestigationReport:
         timing_ms=timing,
     )
 
+    # Route anything that isn't a clean RELEASE to a human reviewer:
+    # write an escalation ticket a human can actually open and act on,
+    # instead of a decision that only ever reached the console.
+    #
+    # Ticket creation is a side effect, not the investigation itself -
+    # a DB hiccup (unreachable Postgres, escalation_tickets not yet
+    # provisioned, FK violation, connection-pool timeout) must not take
+    # down an otherwise-successful investigation that already computed
+    # a correct decision + narrative. Same guard as investigate_adhoc().
+    if report.decision != "RELEASE":
+        try:
+            report.ticket_id = create_ticket(report)
+        except Exception as exc:
+            print(
+                f"[investigate_order] escalation ticket not created for "
+                f"{order_id}: {exc}",
+                file=sys.stderr,
+            )
+            report.ticket_id = None
+
+    return report
+
+
+def investigate_adhoc(
+    data,
+    customer_id: str,
+    pincode: str,
+    courier_id: str,
+    order_value: float,
+    **kwargs,
+) -> InvestigationReport:
+    """
+    Same pipeline as `investigate_order()` (evidence -> decision ->
+    precedent -> narrative), but for a (customer_id, pincode,
+    courier_id, order_value) combination described live rather than
+    looked up from an existing `order_id` - see
+    `analytics.get_adhoc_investigation`. `**kwargs` passes through
+    any optional order fields (order_id, seller_id, cod_amount, ...)
+    it accepts.
+
+    There is no "not found" case here the way there is for
+    `investigate_order` - an unknown customer/pincode/courier is a
+    valid (if data-thin) thing to investigate, and flows into
+    ESCALATE via `data_quality.issues` like any other order with
+    critical signal data missing.
+    """
+
+    timing: Dict[str, float] = {}
+
+    t0 = time.perf_counter()
+    investigation = get_adhoc_investigation(
+        data, customer_id, pincode, courier_id, order_value, **kwargs
+    )
+    timing["evidence_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+
+    order_id = investigation["order"]["order_id"]
+
+    t0 = time.perf_counter()
+    decision = decide(data, investigation)
+    timing["decision_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+
+    t0 = time.perf_counter()
+    cases = retrieve_similar_cases(investigation, top_k=3)
+    timing["retrieval_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+
+    t0 = time.perf_counter()
+    try:
+        narrative = build_llm_narrative(investigation, decision, cases)
+        narrative_source = "llm"
+    except Exception:
+        narrative = build_template_narrative(decision, cases)
+        narrative_source = "template_fallback"
+    timing["narrative_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+
+    report = InvestigationReport(
+        order_id=order_id,
+        decision=decision.decision,
+        risk_level=decision.risk_level,
+        confidence=decision.confidence,
+        reason=decision.reason,
+        supporting_evidence=decision.supporting_evidence,
+        counter_evidence=decision.counter_evidence,
+        uncertainty_flags=decision.uncertainty_flags,
+        narrative=narrative.narrative,
+        narrative_source=narrative_source,
+        advisory_flag=narrative.advisory_flag,
+        most_relevant_case_id=narrative.most_relevant_case_id,
+        retrieved_case_ids=[c["case_id"] for c in cases],
+        timing_ms=timing,
+    )
+
+    # Same escalation-ticket routing as investigate_order(), with one
+    # difference: escalation_tickets.order_id has a foreign key to
+    # orders(order_id), and an ad-hoc order (synthetic "ADHOC-..." id,
+    # or any order_id not actually present in the `orders` table) can
+    # never satisfy that constraint. That's a ticketing-schema
+    # limitation, not an investigation failure, so a failed ticket
+    # insert is logged and surfaced via ticket_id=None rather than
+    # raised - it must not take down an otherwise-successful
+    # investigation over a side effect.
+    if report.decision != "RELEASE":
+        try:
+            report.ticket_id = create_ticket(report)
+        except Exception as exc:
+            print(
+                f"[investigate_adhoc] escalation ticket not created for "
+                f"{order_id}: {exc}",
+                file=sys.stderr,
+            )
+            report.ticket_id = None
+
+    return report
+
 
 # ============================================================
 # MAIN (demo)
@@ -279,6 +394,8 @@ def print_report(report: InvestigationReport) -> None:
     print(f"\n{report.narrative}")
     if report.advisory_flag:
         print(f"\n[ADVISORY] {report.advisory_flag}")
+    if report.ticket_id:
+        print(f"\n[ESCALATION TICKET] {report.ticket_id} (status=OPEN)")
     print(f"\nRetrieved cases: {report.retrieved_case_ids or 'none'}")
     total_ms = sum(report.timing_ms.values())
     timing_str = ", ".join(f"{k}={v}ms" for k, v in report.timing_ms.items())

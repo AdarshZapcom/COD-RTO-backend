@@ -1,0 +1,439 @@
+<title>Investigation Pipeline</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Serif+4:wght@400;600&display=swap">
+<style>
+  :root {
+    --bg: #F1F5F6;
+    --surface: #FFFFFF;
+    --surface-2: #E5EBED;
+    --ink: #17212B;
+    --ink-soft: #4C5B66;
+    --line: #C7D2D6;
+    --line-strong: #93A2A9;
+    --accent-teal: #196B66;
+    --accent-teal-soft: #E1F0EE;
+    --accent-amber: #A6690F;
+    --accent-amber-soft: #FBEDDA;
+    --shadow: 0 1px 2px rgba(23,33,43,0.06), 0 10px 28px rgba(23,33,43,0.06);
+    --font-display: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+    --font-body: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+    --font-mono: 'IBM Plex Mono', 'SFMono-Regular', Consolas, monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #10161D;
+      --surface: #19222B;
+      --surface-2: #202A34;
+      --ink: #E6EBEE;
+      --ink-soft: #A6B4BC;
+      --line: #2E3A43;
+      --line-strong: #47565F;
+      --accent-teal: #55BDB4;
+      --accent-teal-soft: #172E2C;
+      --accent-amber: #E39A45;
+      --accent-amber-soft: #382712;
+      --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 10px 28px rgba(0,0,0,0.35);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #10161D;
+    --surface: #19222B;
+    --surface-2: #202A34;
+    --ink: #E6EBEE;
+    --ink-soft: #A6B4BC;
+    --line: #2E3A43;
+    --line-strong: #47565F;
+    --accent-teal: #55BDB4;
+    --accent-teal-soft: #172E2C;
+    --accent-amber: #E39A45;
+    --accent-amber-soft: #382712;
+    --shadow: 0 1px 2px rgba(0,0,0,0.4), 0 10px 28px rgba(0,0,0,0.35);
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-body);
+    line-height: 1.5;
+  }
+
+  main {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 56px 24px 80px;
+    display: flex;
+    flex-direction: column;
+    gap: 40px;
+  }
+
+  header {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 500;
+    letter-spacing: 0.09em;
+    text-transform: uppercase;
+    color: var(--accent-amber);
+  }
+
+  h1 {
+    font-family: var(--font-display);
+    font-weight: 700;
+    font-size: clamp(28px, 4vw, 40px);
+    margin: 0;
+    text-wrap: balance;
+  }
+
+  .subhead {
+    font-family: var(--font-body);
+    font-size: 17px;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 20px 28px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    color: var(--ink-soft);
+  }
+
+  .legend-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .swatch {
+    width: 26px;
+    height: 3px;
+    border-radius: 2px;
+    flex: none;
+  }
+  .swatch.dashed {
+    background: none;
+    border-top: 3px dashed var(--accent-amber);
+    height: 0;
+  }
+  .swatch.teal { background: var(--accent-teal); }
+  .swatch.amber { background: var(--accent-amber); }
+
+  figure {
+    margin: 0;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 28px 28px 22px;
+    box-shadow: var(--shadow);
+  }
+
+  figure svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+    font-family: var(--font-mono);
+  }
+
+  figcaption {
+    margin-top: 18px;
+    padding-top: 16px;
+    border-top: 1px solid var(--line);
+    font-family: var(--font-body);
+    font-size: 14.5px;
+    color: var(--ink-soft);
+    max-width: 78ch;
+  }
+
+  figcaption strong {
+    color: var(--ink);
+    font-weight: 600;
+  }
+
+  section h2 {
+    font-family: var(--font-display);
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    color: var(--ink-soft);
+    margin: 0 0 14px;
+  }
+
+  .status {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 28px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 24px 28px;
+    box-shadow: var(--shadow);
+  }
+
+  .status-col h3 {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin: 0 0 10px;
+  }
+  .status-col.built h3 { color: var(--accent-teal); }
+  .status-col.planned h3 { color: var(--accent-amber); }
+
+  .status-col ul {
+    margin: 0;
+    padding-left: 18px;
+    font-size: 14px;
+    color: var(--ink-soft);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .status-col.built li { color: var(--ink); }
+
+  @media (max-width: 640px) {
+    .status { grid-template-columns: 1fr; }
+  }
+</style>
+
+<main>
+  <header>
+    <div class="eyebrow">Quessathon 2026 &middot; Retail Challenge 01 &middot; Find the Signal</div>
+    <h1>Investigation Pipeline</h1>
+    <p class="subhead">How an incoming COD order becomes a RELEASE / HOLD / ESCALATE call — and exactly where the deterministic engine's authority ends and the LLM's begins.</p>
+  </header>
+
+  <div class="legend">
+    <div class="legend-item"><span class="swatch teal"></span> Deterministic &amp; authoritative</div>
+    <div class="legend-item"><span class="swatch amber"></span> Deterministic retrieval (Chroma rerank)</div>
+    <div class="legend-item"><span class="swatch dashed"></span> LLM call — optional, explains only</div>
+  </div>
+
+  <figure>
+    <svg viewBox="0 0 1160 620" role="img" aria-label="Evidence from a synthetic dataset flows through a deterministic Evidence Layer into a deterministic Decision Engine, which alone sets the final decision, risk level and confidence on the Investigation Report. A separate Case Memory (ChromaDB) retrieves historical precedent and hands it, together with the decision's evidence, to an Investigation Agent, which calls an external LLM Narrator. The LLM's output can only ever fill the report's narrative field, never its decision field, and falls back to a deterministic template if the LLM is unavailable.">
+      <defs>
+        <marker id="mTeal" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+          <polygon points="0,0 8,4 0,8" fill="var(--accent-teal)" />
+        </marker>
+        <marker id="mAmber" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+          <polygon points="0,0 8,4 0,8" fill="var(--accent-amber)" />
+        </marker>
+      </defs>
+
+      <!-- ================= TOP ROW: deterministic evidence spine ================= -->
+      <!-- Synthetic Dataset -->
+      <rect x="40" y="40" width="190" height="110" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+      <text x="58" y="66" font-size="10.5" fill="var(--ink-soft)" letter-spacing="0.04em">DATA_GENERATOR.PY</text>
+      <text x="58" y="88" font-size="15" font-family="var(--font-display)" font-weight="600" fill="var(--ink)">Synthetic Dataset</text>
+      <text x="58" y="107" font-size="11" fill="var(--ink-soft)">
+        <tspan x="58" dy="0">orders &middot; customers &middot;</tspan>
+        <tspan x="58" dy="14">pincode/courier lanes &middot; events</tspan>
+      </text>
+
+      <!-- arrow to Evidence Layer -->
+      <line x1="230" y1="95" x2="296" y2="95" stroke="var(--accent-teal)" stroke-width="2" marker-end="url(#mTeal)"/>
+
+      <!-- Evidence Layer -->
+      <rect x="300" y="40" width="220" height="110" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+      <text x="318" y="66" font-size="10.5" fill="var(--ink-soft)" letter-spacing="0.04em">ANALYTICS.PY</text>
+      <text x="318" y="88" font-size="15" font-family="var(--font-display)" font-weight="600" fill="var(--ink)">Evidence Layer</text>
+      <text x="318" y="107" font-size="11" fill="var(--ink-soft)">
+        <tspan x="318" dy="0">customer / pincode / courier /</tspan>
+        <tspan x="318" dy="14">lane signals, 7d&middot;30d&middot;90d trend,</tspan>
+        <tspan x="318" dy="14">data-quality checks</tspan>
+      </text>
+
+      <!-- arrow to Decision Engine -->
+      <line x1="520" y1="95" x2="586" y2="95" stroke="var(--accent-teal)" stroke-width="2" marker-end="url(#mTeal)"/>
+
+      <!-- Decision Engine (authoritative — thicker border) -->
+      <rect x="590" y="40" width="220" height="110" rx="10" fill="var(--accent-teal-soft)" stroke="var(--accent-teal)" stroke-width="3"/>
+      <text x="608" y="66" font-size="10.5" fill="var(--accent-teal)" letter-spacing="0.04em">DECISION_ENGINE.PY</text>
+      <text x="608" y="88" font-size="15" font-family="var(--font-display)" font-weight="700" fill="var(--ink)">Decision Engine</text>
+      <text x="608" y="107" font-size="11" fill="var(--ink-soft)">
+        <tspan x="608" dy="0">DETERMINISTIC — release /</tspan>
+        <tspan x="608" dy="14">hold / escalate, risk, confidence</tspan>
+      </text>
+
+      <!-- Decision Engine -> Report slot A (final decision), orthogonal path -->
+      <polyline points="810,95 855,95 855,222 896,222" fill="none" stroke="var(--accent-teal)" stroke-width="2" marker-end="url(#mTeal)"/>
+      <text x="815" y="86" font-size="10.5" fill="var(--accent-teal)">decision (final)</text>
+
+      <!-- Decision Engine -> Investigation Agent, vertical -->
+      <line x1="700" y1="150" x2="700" y2="246" stroke="var(--accent-teal)" stroke-width="2" marker-end="url(#mTeal)"/>
+      <text x="708" y="205" font-size="10.5" fill="var(--accent-teal)">decision + evidence</text>
+
+      <!-- ================= MIDDLE ROW: assembly ================= -->
+      <!-- Investigation Agent -->
+      <rect x="590" y="250" width="220" height="140" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+      <text x="608" y="278" font-size="10.5" fill="var(--ink-soft)" letter-spacing="0.04em">INVESTIGATION_AGENT.PY</text>
+      <text x="608" y="300" font-size="15" font-family="var(--font-display)" font-weight="600" fill="var(--ink)">Investigation Agent</text>
+      <text x="608" y="320" font-size="11" fill="var(--ink-soft)">
+        <tspan x="608" dy="0">assembles decision, precedent</tspan>
+        <tspan x="608" dy="14">and narrative into one report</tspan>
+      </text>
+      <text x="608" y="376" font-size="10.5" fill="var(--ink-soft)" font-style="italic">retrieved case text = untrusted data</text>
+
+      <!-- Agent -> LLM Narrator, dashed amber -->
+      <line x1="700" y1="390" x2="700" y2="466" stroke="var(--accent-amber)" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#mAmber)"/>
+      <text x="708" y="435" font-size="10.5" fill="var(--accent-amber)">
+        <tspan x="708" dy="0">evidence + cases</tspan>
+        <tspan x="708" dy="13">(untrusted data)</tspan>
+      </text>
+
+      <!-- ================= BOTTOM ROW: retrieval + LLM ================= -->
+      <!-- Historical Cases -->
+      <rect x="40" y="470" width="190" height="110" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+      <text x="58" y="496" font-size="10.5" fill="var(--ink-soft)" letter-spacing="0.04em">HISTORICAL_CASES.CSV</text>
+      <text x="58" y="518" font-size="15" font-family="var(--font-display)" font-weight="600" fill="var(--ink)">Historical Cases</text>
+      <text x="58" y="537" font-size="11" fill="var(--ink-soft)">99 past investigations</text>
+
+      <!-- arrow to Case Memory -->
+      <line x1="230" y1="525" x2="296" y2="525" stroke="var(--accent-amber)" stroke-width="2" marker-end="url(#mAmber)"/>
+
+      <!-- Case Memory -->
+      <rect x="300" y="470" width="220" height="110" rx="10" fill="var(--surface)" stroke="var(--line)" stroke-width="1.5"/>
+      <text x="318" y="496" font-size="10.5" fill="var(--ink-soft)" letter-spacing="0.04em">CASE_MEMORY.PY &middot; CHROMADB</text>
+      <text x="318" y="518" font-size="15" font-family="var(--font-display)" font-weight="600" fill="var(--ink)">Case Memory</text>
+      <text x="318" y="537" font-size="11" fill="var(--ink-soft)">
+        <tspan x="318" dy="0">local embeddings — same-lane</tspan>
+        <tspan x="318" dy="14">match first, semantic fallback</tspan>
+      </text>
+
+      <!-- Case Memory -> Investigation Agent, orthogonal amber -->
+      <polyline points="520,525 560,525 560,320 586,320" fill="none" stroke="var(--accent-amber)" stroke-width="2" marker-end="url(#mAmber)"/>
+      <text x="524" y="516" font-size="10.5" fill="var(--accent-amber)">precedent (top-3, same-lane first)</text>
+
+      <!-- LLM Narrator (external / optional — dashed) -->
+      <rect x="590" y="470" width="220" height="110" rx="10" fill="none" stroke="var(--accent-amber)" stroke-width="1.75" stroke-dasharray="7 5"/>
+      <text x="608" y="496" font-size="10.5" fill="var(--accent-amber)" letter-spacing="0.04em">OPENAI &middot; GPT-4O-MINI</text>
+      <text x="608" y="518" font-size="15" font-family="var(--font-display)" font-weight="600" fill="var(--ink)">LLM Narrator</text>
+      <text x="608" y="537" font-size="11" fill="var(--ink-soft)">
+        <tspan x="608" dy="0">explains the call only. No key,</tspan>
+        <tspan x="608" dy="14">timeout, or failure &rarr; template</tspan>
+        <tspan x="608" dy="14">narrative from the same evidence</tspan>
+      </text>
+
+      <!-- LLM Narrator -> Report slot B (narrative), orthogonal dashed amber -->
+      <polyline points="810,525 855,525 855,412 896,412" fill="none" stroke="var(--accent-amber)" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#mAmber)"/>
+      <text x="815" y="516" font-size="10.5" fill="var(--accent-amber)">narrative only — never the decision</text>
+
+      <!-- ================= RIGHT COLUMN: Investigation Report ================= -->
+      <rect x="900" y="40" width="220" height="540" rx="10" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1.75"/>
+      <text x="918" y="66" font-size="10.5" fill="var(--ink-soft)" letter-spacing="0.04em">OUTPUT</text>
+      <text x="918" y="90" font-size="16" font-family="var(--font-display)" font-weight="700" fill="var(--ink)">Investigation</text>
+      <text x="918" y="110" font-size="16" font-family="var(--font-display)" font-weight="700" fill="var(--ink)">Report</text>
+
+      <!-- slot A: decision (teal) -->
+      <rect x="916" y="150" width="6" height="175" fill="var(--accent-teal)"/>
+      <rect x="930" y="150" width="174" height="175" rx="6" fill="var(--accent-teal-soft)"/>
+      <text x="946" y="176" font-size="10" fill="var(--accent-teal)" letter-spacing="0.05em">FINAL — SET ONCE</text>
+      <text x="946" y="198" font-size="12.5" fill="var(--ink)">
+        <tspan x="946" dy="0" font-weight="600">decision</tspan>
+        <tspan x="946" dy="18">risk_level</tspan>
+        <tspan x="946" dy="18">confidence</tspan>
+        <tspan x="946" dy="18">supporting_evidence</tspan>
+        <tspan x="946" dy="18">counter_evidence</tspan>
+        <tspan x="946" dy="18">uncertainty_flags</tspan>
+      </text>
+
+      <!-- slot B: narrative (amber) -->
+      <rect x="916" y="340" width="6" height="175" fill="var(--accent-amber)"/>
+      <rect x="930" y="340" width="174" height="175" rx="6" fill="var(--accent-amber-soft)"/>
+      <text x="946" y="366" font-size="10" fill="var(--accent-amber)" letter-spacing="0.05em">EXPLANATORY ONLY</text>
+      <text x="946" y="388" font-size="12.5" fill="var(--ink)">
+        <tspan x="946" dy="0" font-weight="600">narrative</tspan>
+        <tspan x="946" dy="18">narrative_source</tspan>
+        <tspan x="946" dy="18">advisory_flag</tspan>
+        <tspan x="946" dy="18">retrieved_case_ids</tspan>
+      </text>
+
+      <text x="918" y="558" font-size="11.5" font-style="italic" fill="var(--ink-soft)">&rarr; shown to the human ops reviewer</text>
+    </svg>
+
+    <figcaption>
+      The <strong>Decision Engine</strong> is the only thing that ever writes <code>decision</code>, <code>risk_level</code> or <code>confidence</code> — nothing downstream can revise that call. The <strong>LLM Narrator</strong> sits outside that boundary entirely: it can only ever fill the report's <code>narrative</code> field, and if it's unavailable, times out, or fails, a deterministic template built from the exact same evidence takes its place. This is the direct answer to two rehearsed jury questions — <em>"How do you prevent hallucination?"</em> and <em>"What if your LLM is wrong?"</em> — the operational call was never the LLM's to make.
+    </figcaption>
+  </figure>
+
+  <section>
+    <h2>Planned Deployment</h2>
+    <figure>
+      <svg viewBox="0 0 1000 260" role="img" aria-label="Not yet built: a React frontend and a FastAPI backend both run on one AWS EC2 instance; the backend reads and writes a Supabase Postgres database, replacing the current local CSV and SQLite files.">
+        <defs>
+          <marker id="dNeutral" markerWidth="9" markerHeight="9" refX="7" refY="4" orient="auto">
+            <polygon points="0,0 8,4 0,8" fill="var(--ink-soft)" />
+          </marker>
+        </defs>
+
+        <rect x="40" y="40" width="560" height="180" rx="12" fill="var(--surface-2)" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="8 6"/>
+        <text x="58" y="66" font-size="11" fill="var(--ink-soft)" letter-spacing="0.06em">AWS EC2</text>
+
+        <rect x="70" y="90" width="230" height="100" rx="9" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="6 5"/>
+        <text x="88" y="130" font-size="15" font-family="var(--font-display)" font-weight="600" fill="var(--ink)">React Frontend</text>
+        <text x="88" y="150" font-size="11" fill="var(--ink-soft)">order queue &amp; investigation view</text>
+
+        <line x1="300" y1="140" x2="336" y2="140" stroke="var(--ink-soft)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#dNeutral)"/>
+        <text x="303" y="130" font-size="10.5" fill="var(--ink-soft)">REST / JSON</text>
+
+        <rect x="340" y="90" width="230" height="100" rx="9" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="6 5"/>
+        <text x="358" y="130" font-size="15" font-family="var(--font-display)" font-weight="600" fill="var(--ink)">FastAPI Backend</text>
+        <text x="358" y="150" font-size="11" fill="var(--ink-soft)">
+          <tspan x="358" dy="0">wraps the investigation</tspan>
+          <tspan x="358" dy="14">pipeline above</tspan>
+        </text>
+
+        <line x1="570" y1="140" x2="696" y2="140" stroke="var(--ink-soft)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#dNeutral)"/>
+        <line x1="696" y1="152" x2="606" y2="152" stroke="var(--ink-soft)" stroke-width="2" stroke-dasharray="5 4" marker-end="url(#dNeutral)"/>
+        <text x="590" y="176" font-size="10.5" fill="var(--ink-soft)" text-anchor="end">reads / writes</text>
+
+        <rect x="700" y="90" width="260" height="100" rx="9" fill="var(--surface)" stroke="var(--line-strong)" stroke-width="1.5" stroke-dasharray="6 5"/>
+        <text x="718" y="118" font-size="10.5" fill="var(--ink-soft)" letter-spacing="0.04em">POSTGRES</text>
+        <text x="718" y="140" font-size="15" font-family="var(--font-display)" font-weight="600" fill="var(--ink)">Supabase</text>
+        <text x="718" y="160" font-size="11" fill="var(--ink-soft)">
+          <tspan x="718" dy="0">replaces local CSV / SQLite —</tspan>
+          <tspan x="718" dy="14">orders, customers, lanes, cases</tspan>
+        </text>
+      </svg>
+      <figcaption>
+        Nothing in this diagram exists yet. The pipeline on the left is real and runs locally; hosting moves it behind a FastAPI service and a Supabase Postgres database without changing the authority model above — the Decision Engine still decides, the LLM still only narrates.
+      </figcaption>
+    </figure>
+  </section>
+
+  <div class="status">
+    <div class="status-col built">
+      <h3>Built</h3>
+      <ul>
+        <li>Synthetic dataset — 10 deliberate scenarios</li>
+        <li>Deterministic evidence layer</li>
+        <li>Deterministic decision engine — validated against all 10 scenarios</li>
+        <li>ChromaDB case memory, same-lane-first rerank</li>
+        <li>LLM narrative layer with template fallback</li>
+        <li>Local SQLite mirror for querying</li>
+      </ul>
+    </div>
+    <div class="status-col planned">
+      <h3>Not yet built</h3>
+      <ul>
+        <li>Operational insight (courier/pincode pattern) output</li>
+        <li>FastAPI backend</li>
+        <li>React frontend</li>
+        <li>EC2 hosting</li>
+        <li>Supabase migration</li>
+        <li>Escalation ticket / handoff record</li>
+      </ul>
+    </div>
+  </div>
+</main>

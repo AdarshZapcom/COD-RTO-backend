@@ -1,4 +1,5 @@
 import os
+import time
 import pandas as pd
 
 
@@ -514,26 +515,25 @@ def compare_signals(
 # FULL ORDER INVESTIGATION
 # ============================================================
 
-def get_order_investigation(data, order_id):
+def build_investigation(data, order, customer_id, pincode, courier_id):
+    """
+    Assemble the full investigation dict for a given order-shaped
+    object (a pandas Series from the `orders` table, or a plain
+    dict for an ad-hoc order) plus the three dimension ids to look
+    signals up by.
 
-    orders = data["orders"]
+    `order` only needs to support `.get(key)` and `order["order_id"]`
+    - both a pandas Series row and a plain dict satisfy that, which
+    is what lets this same body serve a real order row (see
+    `get_order_investigation`) and a synthetic ad-hoc order (see
+    `get_adhoc_investigation`) without duplicating any logic.
 
-    order_rows = orders[
-        orders["order_id"] == order_id
-    ]
+    customer_id / pincode / courier_id are taken as explicit
+    arguments rather than read off `order` so this works identically
+    whether or not `order` itself came from a real, persisted row.
+    """
 
-    if order_rows.empty:
-        return {
-            "found": False,
-            "order_id": order_id,
-            "error": "Order not found"
-        }
-
-    order = order_rows.iloc[0]
-
-    customer_id = order["customer_id"]
-    pincode = order["pincode"]
-    courier_id = order["courier_id"]
+    order_id = order["order_id"]
 
     customer_signal = get_customer_signal(
         data,
@@ -615,6 +615,88 @@ def get_order_investigation(data, order_id):
 
         "signal_comparison": signal_comparison,
     }
+
+
+def get_order_investigation(data, order_id):
+    """Look up a real order row by id, then run the full investigation."""
+
+    orders = data["orders"]
+
+    order_rows = orders[
+        orders["order_id"] == order_id
+    ]
+
+    if order_rows.empty:
+        return {
+            "found": False,
+            "order_id": order_id,
+            "error": "Order not found"
+        }
+
+    order = order_rows.iloc[0]
+
+    customer_id = order["customer_id"]
+    pincode = order["pincode"]
+    courier_id = order["courier_id"]
+
+    return build_investigation(
+        data,
+        order,
+        customer_id,
+        pincode,
+        courier_id
+    )
+
+
+def get_adhoc_investigation(
+    data,
+    customer_id,
+    pincode,
+    courier_id,
+    order_value,
+    order_id=None,
+    **order_fields
+):
+    """
+    Run the full investigation for a (customer_id, pincode,
+    courier_id, order_value) combination that may not correspond to
+    any existing order - including combinations where the customer,
+    pincode, or courier themselves don't exist in the dataset at all.
+
+    This is for the jury's live curveball: an order described
+    verbally on stage rather than pre-generated in `orders.csv`. An
+    unknown id for any dimension is not an error here - it flows
+    through to `build_investigation` exactly like a real but
+    thin-data order would, and shows up as a data-quality issue that
+    `decision_engine.decide()` already escalates on its own.
+
+    `order_id` defaults to a synthetic "ADHOC-<timestamp>" id when
+    not supplied. `**order_fields` accepts any of the same optional
+    order attributes `get_order_investigation` surfaces (seller_id,
+    product_category, cod_amount, payment_type, is_first_order,
+    address_verified) - anything not supplied is simply absent
+    (`None` via dict.get), the same as a sparsely-populated real row.
+    """
+
+    if order_id is None:
+        order_id = f"ADHOC-{int(time.time() * 1000)}"
+
+    order = {
+        **order_fields,
+        "order_id": order_id,
+        "customer_id": customer_id,
+        "pincode": pincode,
+        "courier_id": courier_id,
+        "order_value": order_value,
+    }
+
+    return build_investigation(
+        data,
+        order,
+        customer_id,
+        pincode,
+        courier_id
+    )
 
 
 # ============================================================
