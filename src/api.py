@@ -40,6 +40,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 
 from analytics import load_data
@@ -64,6 +65,16 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Find the Signal", lifespan=lifespan)
+
+# Demo backend for one local frontend during rehearsal/event day - allow
+# any origin rather than hardcode a port that may change (5173 vs 4173
+# preview, or an EC2 host later).
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 
 # ============================================================
