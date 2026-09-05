@@ -19,6 +19,14 @@ The schema is created with `CREATE TABLE IF NOT EXISTS`, so re-running
 this module's `ensure_schema()` (e.g. via `python src/ticketing.py`) is
 always safe and never touches existing rows.
 
+`order_id` intentionally carries no foreign key to `orders(order_id)`.
+Ad hoc investigations (`investigate_adhoc()`, synthetic
+"ADHOC-<timestamp>" ids - see task 03/05) are a first-class input that
+is never a row in `orders`, so a ticket must still be insertable for
+one. `ensure_schema()` also drops that FK if an earlier deployment
+already created it, so this is safe to rerun against any existing
+table.
+
 Usage:
     python src/ticketing.py     # creates escalation_tickets if missing
 """
@@ -42,7 +50,7 @@ DB_URL = os.environ.get("SUPABASE_DB_URL")
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS escalation_tickets (
     ticket_id            text PRIMARY KEY,
-    order_id             text REFERENCES orders(order_id),
+    order_id             text NOT NULL,
     decision             text,              -- HOLD_FOR_VERIFICATION | ESCALATE
     risk_level           text,
     confidence           double precision,
@@ -57,6 +65,14 @@ CREATE TABLE IF NOT EXISTS escalation_tickets (
     resolution_note      text,
     resolved_at          timestamptz
 );
+
+-- No FK from order_id to orders(order_id): an ad hoc investigation's
+-- order_id (synthetic "ADHOC-<timestamp>") never exists in `orders`,
+-- and it is still a first-class case that must be able to escalate.
+-- Drop the FK in case an earlier deployment created this table before
+-- ad hoc orders existed - IF EXISTS keeps this safe to rerun against
+-- a table that never had the constraint.
+ALTER TABLE escalation_tickets DROP CONSTRAINT IF EXISTS escalation_tickets_order_id_fkey;
 """
 
 
@@ -87,8 +103,14 @@ def create_ticket(report: "InvestigationReport") -> Optional[str]:
 
     ticket_id is deterministic (f"TCK-{order_id}"), so re-investigating
     the same order upserts the same row instead of raising a duplicate
-    key error - the decision/evidence fields are refreshed, the OPEN/
-    RESOLVED workflow state (status, resolved_*) is left alone.
+    key error - the decision/evidence fields are refreshed AND the
+    ticket is reopened (status reset to 'OPEN', resolved_by/
+    resolution_note/resolved_at cleared). A fresh non-RELEASE decision
+    is a new escalation event that needs sign-off, even if a prior
+    escalation for this same order was already resolved - otherwise the
+    row would silently stay RESOLVED and vanish from
+    list_open_tickets()/GET /tickets?status=OPEN despite the report
+    handed back to the caller carrying a live ticket_id.
     """
 
     if report.decision == "RELEASE":
@@ -114,7 +136,11 @@ def create_ticket(report: "InvestigationReport") -> Optional[str]:
                     supporting_evidence = EXCLUDED.supporting_evidence,
                     counter_evidence    = EXCLUDED.counter_evidence,
                     uncertainty_flags   = EXCLUDED.uncertainty_flags,
-                    narrative           = EXCLUDED.narrative
+                    narrative           = EXCLUDED.narrative,
+                    status              = 'OPEN',
+                    resolved_by         = NULL,
+                    resolution_note     = NULL,
+                    resolved_at         = NULL
                 """,
                 (
                     ticket_id,

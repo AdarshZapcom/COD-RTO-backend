@@ -676,10 +676,25 @@ def get_adhoc_investigation(
     product_category, cod_amount, payment_type, is_first_order,
     address_verified) - anything not supplied is simply absent
     (`None` via dict.get), the same as a sparsely-populated real row.
+
+    A caller-supplied `order_id` is never trusted verbatim: it is
+    always namespaced under the "ADHOC-" prefix (unless already
+    present) before use. This input is, by definition, unverified -
+    a caller can pair a real, existing order_id (e.g. "ORD-10007")
+    with entirely fabricated customer_id/pincode/courier_id/
+    order_value - and downstream, `ticketing.create_ticket()` derives
+    `ticket_id` deterministically as f"TCK-{order_id}" and upserts on
+    that id. Without namespacing, a fabricated ad-hoc report for a
+    real order_id would silently overwrite that real order's genuine
+    escalation ticket. Namespacing guarantees an ad-hoc order_id can
+    never collide with a real one, independent of whatever the
+    dataset currently contains.
     """
 
     if order_id is None:
         order_id = f"ADHOC-{int(time.time() * 1000)}"
+    elif not order_id.startswith("ADHOC-"):
+        order_id = f"ADHOC-{order_id}"
 
     order = {
         **order_fields,

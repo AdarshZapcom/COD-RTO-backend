@@ -34,7 +34,11 @@ Invariants checked (see the task spec for the authoritative list):
        ESCALATE (never RELEASE, never HOLD_FOR_VERIFICATION)
     5. courier_pincode.data_quality == "MISSING" always results in ESCALATE
     6. supporting_count >= 2 and counter_count >= 2 always results in
-       HOLD_FOR_VERIFICATION, never RELEASE or ESCALATE
+       HOLD_FOR_VERIFICATION, never RELEASE or ESCALATE - except when
+       data_quality["issues"] is non-empty, in which case invariant 5
+       applies instead: decide() deliberately checks critical-data-
+       missing (branch 1) before conflicting-evidence (branch 2), so
+       ESCALATE is the correct outcome on that overlap, not a bug
     7. confidence for RELEASE is always higher than confidence for
        ESCALATE on the same order shape (sanity check on the fixed
        confidence table in decide())
@@ -117,6 +121,18 @@ def inv_missing_courier_pincode_escalates(investigation, decision: DecisionResul
 
 
 def inv_conflicting_evidence_holds(investigation, decision: DecisionResult) -> Optional[str]:
+    # decide()'s branch order is intentional (see its own inline
+    # comments): branch 1 (critical data missing -> ESCALATE) is
+    # checked *before* branch 2 (conflicting evidence -> HOLD), so a
+    # case with data_quality["issues"] takes the ESCALATE path even
+    # if supporting/counter evidence also happens to conflict there.
+    # Invariant 5 (MISSING critical data -> ESCALATE) therefore wins
+    # over invariant 6 on that overlap - mirror that precedence here
+    # rather than treating it as a violation of this invariant.
+    quality = investigation.get("data_quality", {}) or {}
+    if quality.get("issues"):
+        return None
+
     comparison = investigation.get("signal_comparison", {}) or {}
     supporting = comparison.get("supporting_count", 0)
     counter = comparison.get("counter_count", 0)

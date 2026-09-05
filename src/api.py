@@ -33,20 +33,37 @@ from __future__ import annotations
 
 import os
 import sys
+from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from analytics import load_data
+from case_memory import warm_embedding_model
 from investigation_agent import InvestigationReport, investigate_adhoc, investigate_order
 from operational_insights import OperationalInsight, get_operational_insights
 from ticketing import list_open_tickets, resolve_ticket
 
-app = FastAPI(title="Find the Signal")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Warm the case-memory embedding model now (costs a few seconds) so
+    # the first live investigation isn't the one that pays for it - see
+    # case_memory.warm_embedding_model(). Non-fatal: if this fails for
+    # any reason, the first real request just pays the warmup cost
+    # itself instead, exactly like before this existed.
+    try:
+        warm_embedding_model()
+    except Exception:
+        pass
+    yield
+
+
+app = FastAPI(title="Find the Signal", lifespan=lifespan)
 
 
 # ============================================================
@@ -117,6 +134,22 @@ class AdhocOrderRequest(BaseModel):
     payment_type: Optional[str] = None
     is_first_order: Optional[bool] = None
     address_verified: Optional[bool] = None
+
+    @field_validator("customer_id", "pincode", "courier_id", mode="before")
+    @classmethod
+    def _coerce_to_str(cls, value):
+        """Accept a JSON number as well as a string. Every other layer
+        of the system (analytics.py, stress_test.py) already treats
+        these ids/pincode as str-or-int interchangeably, and this
+        endpoint's whole purpose is the jury's free-form live curveball
+        input - a numeric pincode is a very plausible thing to receive."""
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, int):
+            return str(value)
+        if isinstance(value, float) and value.is_integer():
+            return str(int(value))
+        return value
 
 
 class TicketResolveRequest(BaseModel):

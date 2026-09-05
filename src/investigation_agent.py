@@ -33,9 +33,16 @@ import sys
 import time
 from typing import Any, Dict, List, Literal, Optional
 
+from dotenv import load_dotenv
 from pydantic import BaseModel
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Load .env here too (not just ticketing.py/supabase_setup.py) - this
+# module is the one that actually reads OPENAI_API_KEY, and needs it
+# loaded regardless of which entry point imports it first (a CLI run,
+# the FastAPI app, or a one-off script).
+load_dotenv()
 
 from analytics import load_data, get_order_investigation, get_adhoc_investigation
 from decision_engine import DecisionResult, decide
@@ -222,16 +229,30 @@ class InvestigationReport(BaseModel):
     ticket_id: Optional[str] = None
 
 
-def investigate_order(data, order_id: str) -> InvestigationReport:
+def _run_pipeline(
+    data,
+    order_id: str,
+    investigation: Dict[str, Any],
+    timing: Dict[str, float],
+    caller: str,
+) -> InvestigationReport:
+    """
+    Shared post-investigation pipeline for both `investigate_order()`
+    and `investigate_adhoc()`, called once each has produced its own
+    `investigation` dict (an existing order looked up by id vs an ad
+    hoc order described live is the only part that legitimately
+    differs between the two entry points). Everything after that -
+    decide() -> retrieve_similar_cases() -> narrate (LLM with template
+    fallback) -> InvestigationReport construction -> escalation-ticket
+    routing - is identical between them and now lives here exactly
+    once, so a change to any of it (including how a ticket-write
+    failure is handled) only has to be made in one place.
 
-    timing: Dict[str, float] = {}
-
-    t0 = time.perf_counter()
-    investigation = get_order_investigation(data, order_id)
-    timing["evidence_ms"] = round((time.perf_counter() - t0) * 1000, 1)
-
-    if not investigation.get("found"):
-        raise ValueError(f"Order not found: {order_id}")
+    `timing` is mutated in place and must already carry "evidence_ms"
+    from the caller's own evidence-gathering step. `caller` only tags
+    the stderr line if ticket creation fails, so the log still shows
+    which entry point the failure came from.
+    """
 
     t0 = time.perf_counter()
     decision = decide(data, investigation)
@@ -275,19 +296,38 @@ def investigate_order(data, order_id: str) -> InvestigationReport:
     # a DB hiccup (unreachable Postgres, escalation_tickets not yet
     # provisioned, FK violation, connection-pool timeout) must not take
     # down an otherwise-successful investigation that already computed
-    # a correct decision + narrative. Same guard as investigate_adhoc().
+    # a correct decision + narrative. This guard lives here exactly
+    # once and is shared by both investigate_order() and
+    # investigate_adhoc() - it used to be duplicated per-caller, and
+    # only one of the two copies actually had the try/except.
     if report.decision != "RELEASE":
         try:
             report.ticket_id = create_ticket(report)
         except Exception as exc:
             print(
-                f"[investigate_order] escalation ticket not created for "
+                f"[{caller}] escalation ticket not created for "
                 f"{order_id}: {exc}",
                 file=sys.stderr,
             )
             report.ticket_id = None
 
     return report
+
+
+def investigate_order(data, order_id: str) -> InvestigationReport:
+
+    timing: Dict[str, float] = {}
+
+    t0 = time.perf_counter()
+    investigation = get_order_investigation(data, order_id)
+    timing["evidence_ms"] = round((time.perf_counter() - t0) * 1000, 1)
+
+    if not investigation.get("found"):
+        raise ValueError(f"Order not found: {order_id}")
+
+    return _run_pipeline(
+        data, order_id, investigation, timing, caller="investigate_order"
+    )
 
 
 def investigate_adhoc(
@@ -324,61 +364,14 @@ def investigate_adhoc(
 
     order_id = investigation["order"]["order_id"]
 
-    t0 = time.perf_counter()
-    decision = decide(data, investigation)
-    timing["decision_ms"] = round((time.perf_counter() - t0) * 1000, 1)
-
-    t0 = time.perf_counter()
-    cases = retrieve_similar_cases(investigation, top_k=3)
-    timing["retrieval_ms"] = round((time.perf_counter() - t0) * 1000, 1)
-
-    t0 = time.perf_counter()
-    try:
-        narrative = build_llm_narrative(investigation, decision, cases)
-        narrative_source = "llm"
-    except Exception:
-        narrative = build_template_narrative(decision, cases)
-        narrative_source = "template_fallback"
-    timing["narrative_ms"] = round((time.perf_counter() - t0) * 1000, 1)
-
-    report = InvestigationReport(
-        order_id=order_id,
-        decision=decision.decision,
-        risk_level=decision.risk_level,
-        confidence=decision.confidence,
-        reason=decision.reason,
-        supporting_evidence=decision.supporting_evidence,
-        counter_evidence=decision.counter_evidence,
-        uncertainty_flags=decision.uncertainty_flags,
-        narrative=narrative.narrative,
-        narrative_source=narrative_source,
-        advisory_flag=narrative.advisory_flag,
-        most_relevant_case_id=narrative.most_relevant_case_id,
-        retrieved_case_ids=[c["case_id"] for c in cases],
-        timing_ms=timing,
+    # Ad hoc order ids (synthetic "ADHOC-...") are a first-class input
+    # here and are never rows in `orders` - escalation_tickets.order_id
+    # carries no FK to orders(order_id) precisely so the ticket insert
+    # inside _run_pipeline() does not depend on that (see
+    # ticketing.SCHEMA_SQL).
+    return _run_pipeline(
+        data, order_id, investigation, timing, caller="investigate_adhoc"
     )
-
-    # Same escalation-ticket routing as investigate_order(), with one
-    # difference: escalation_tickets.order_id has a foreign key to
-    # orders(order_id), and an ad-hoc order (synthetic "ADHOC-..." id,
-    # or any order_id not actually present in the `orders` table) can
-    # never satisfy that constraint. That's a ticketing-schema
-    # limitation, not an investigation failure, so a failed ticket
-    # insert is logged and surfaced via ticket_id=None rather than
-    # raised - it must not take down an otherwise-successful
-    # investigation over a side effect.
-    if report.decision != "RELEASE":
-        try:
-            report.ticket_id = create_ticket(report)
-        except Exception as exc:
-            print(
-                f"[investigate_adhoc] escalation ticket not created for "
-                f"{order_id}: {exc}",
-                file=sys.stderr,
-            )
-            report.ticket_id = None
-
-    return report
 
 
 # ============================================================

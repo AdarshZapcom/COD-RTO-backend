@@ -125,6 +125,20 @@ def get_embedding_function():
     )
 
 
+def warm_embedding_model() -> None:
+    """
+    Force the sentence-transformers model to load now rather than on the
+    first live retrieval call.
+
+    Loading the model the first time it's used costs several seconds;
+    every call after that is fast (the library caches the loaded model
+    process-wide). Called once at FastAPI startup so that ~seconds-long
+    cost happens before the demo starts, not during the first live
+    investigation on stage.
+    """
+    get_embedding_function()(["warmup"])
+
+
 def get_client():
     os.makedirs(CHROMA_DIR, exist_ok=True)
     return chromadb.PersistentClient(path=CHROMA_DIR)

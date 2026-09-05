@@ -30,22 +30,48 @@ The deterministic decision engine is authoritative for the operational
 call. An LLM (optional — see below) only explains that call in plain
 language for a human reviewer; it can never override it.
 
+## Prerequisites
+
+- Python 3.11+ (developed/tested on 3.13)
+- A Supabase project (Postgres) if you want tickets/insights persisted —
+  optional for just running the decision engine locally
+
 ## Setup
 
 ```
 pip install -r requirements.txt
+copy .env.example .env      # macOS/Linux: cp .env.example .env
 python src/data_generator.py
 python src/decision_engine.py
 python src/investigation_agent.py
 ```
 
 `investigation_agent.py` runs fully offline by default (deterministic
-template narrative). To enable LLM-generated narratives, set an API key
-before running it:
+template narrative). To enable LLM-generated narratives, set
+`OPENAI_API_KEY` in `.env` (see `.env.example`).
+
+## Environment variables
+
+Copy `.env.example` to `.env` and fill in:
+
+| Variable | Required | Purpose |
+|---|---|---|
+| `SUPABASE_DB_URL` | Only for ticketing/Supabase features | Postgres connection string used by `ticketing.py` / `supabase_setup.py` |
+| `OPENAI_API_KEY` | No | Enables LLM narratives; falls back to a deterministic template if unset or the call fails |
+| `INVESTIGATION_AGENT_MODEL` | No | Overrides the OpenAI model (default `gpt-4o-mini`) |
+
+## Run the API server
 
 ```
-set OPENAI_API_KEY=sk-...
+pip install -r requirements.txt   # includes fastapi, uvicorn
+uvicorn src.api:app --reload --port 8000
 ```
+
+Serves the REST API the frontend talks to (`GET /orders`,
+`GET /orders/{order_id}/investigate`, `POST /investigate`,
+`GET /insights`, `GET /tickets`, `POST /tickets/{ticket_id}/resolve`) at
+`http://localhost:8000`. First request after startup includes an
+embedding-model warmup; subsequent calls are fast.
 
 ## Local database (optional)
 
