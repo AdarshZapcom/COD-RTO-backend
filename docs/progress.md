@@ -18,7 +18,7 @@ Both repos have real, working, tested code:
   React + Vite app, all 10 components built, 5 critical race-condition
   bugs found and fixed, 4 accessibility/consistency issues fixed after that.
 - **LLM narratives are live** — `OPENAI_API_KEY` is configured and verified
-  working end-to-end (`narrative_source: "llm"`, real GPT-4o-mini prose),
+  working end-to-end (`narrative_source: "llm"`, real gpt-4.1-nano prose),
   with the deterministic template fallback still intact if it's ever
   unavailable.
 - **Supabase hosts all data** — 8 tables mirroring `data/generated/*.csv`.

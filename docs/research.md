@@ -133,7 +133,7 @@ case_memory.py        -> ChromaDB historical-case memory. Local embeddings
         |
 investigation_agent.py -> ties it together: evidence -> decision ->
                         historical precedent -> human-readable narrative.
-                        LLM (OpenAI, gpt-4o-mini) only explains the
+                        LLM (OpenAI, gpt-4.1-nano) only explains the
                         decision already made; if no API key is set, or
                         the call fails/times out, falls back to a
                         deterministic template narrative built from the
@@ -157,7 +157,7 @@ your LLM is wrong?").
 
 ### 4.2 Stack decisions
 
-- **LLM**: OpenAI API (`gpt-4o-mini` by default, via `OPENAI_API_KEY`)
+- **LLM**: OpenAI API (`gpt-4.1-nano` by default, via `OPENAI_API_KEY`)
 - **Orchestration**: plain Python, no agent framework — each stage is a function with
   a typed (pydantic) input/output; full control, no extra dependency risk for a
   6-day build

@@ -49,7 +49,7 @@ from decision_engine import DecisionResult, decide
 from case_memory import retrieve_similar_cases
 from ticketing import create_ticket
 
-OPENAI_MODEL = os.environ.get("INVESTIGATION_AGENT_MODEL", "gpt-4o-mini")
+OPENAI_MODEL = os.environ.get("INVESTIGATION_AGENT_MODEL", "gpt-4.1-nano")
 
 
 # ============================================================

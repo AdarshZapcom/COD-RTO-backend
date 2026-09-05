@@ -58,7 +58,7 @@ Copy `.env.example` to `.env` and fill in:
 |---|---|---|
 | `SUPABASE_DB_URL` | Only for ticketing/Supabase features | Postgres connection string used by `ticketing.py` / `supabase_setup.py` |
 | `OPENAI_API_KEY` | No | Enables LLM narratives; falls back to a deterministic template if unset or the call fails |
-| `INVESTIGATION_AGENT_MODEL` | No | Overrides the OpenAI model (default `gpt-4o-mini`) |
+| `INVESTIGATION_AGENT_MODEL` | No | Overrides the OpenAI model (default `gpt-4.1-nano`) |
 
 ## Run the API server
 
