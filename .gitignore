@@ -15,3 +15,7 @@ chroma_db/
 
 # Regenerated SQLite DB (rebuild with: python src/build_db.py)
 *.db
+
+# Local MySQL server data directory (rebuild with: python src/build_mysql_db.py,
+# after initializing a server - see README)
+data/mysql_data/
