@@ -31,6 +31,7 @@ Run:
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from contextlib import asynccontextmanager
@@ -48,6 +49,17 @@ from case_memory import warm_embedding_model
 from investigation_agent import InvestigationReport, investigate_adhoc, investigate_order
 from operational_insights import OperationalInsight, get_operational_insights
 from ticketing import list_open_tickets, resolve_ticket
+
+# Configures the root logger once, at the actual process entry point -
+# every other module's `logging.getLogger(__name__)` propagates here,
+# so this one call is what makes every log line in the pipeline
+# (decision_engine, investigation_agent, ticketing, case_memory)
+# actually show up in the uvicorn console instead of going nowhere.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -212,11 +224,14 @@ def get_orders(
 
 @app.get("/orders/{order_id}/investigate", response_model=InvestigationReport)
 def get_order_investigate(order_id: str):
+    logger.info("investigate order_id=%s", order_id)
     try:
         return investigate_order(get_data(), order_id)
     except ValueError:
+        logger.warning("order not found: %s", order_id)
         raise HTTPException(status_code=404, detail=f"Order not found: {order_id}")
     except Exception:
+        logger.exception("investigation failed unexpectedly for order_id=%s", order_id)
         raise HTTPException(status_code=500, detail="Investigation failed unexpectedly.")
 
 
@@ -226,6 +241,10 @@ def get_order_investigate(order_id: str):
 
 @app.post("/investigate", response_model=InvestigationReport)
 def post_investigate(body: AdhocOrderRequest):
+    logger.info(
+        "investigate ad-hoc customer_id=%s pincode=%s courier_id=%s",
+        body.customer_id, body.pincode, body.courier_id,
+    )
     kwargs = body.model_dump(
         exclude={"customer_id", "pincode", "courier_id", "order_value"},
         exclude_none=True,
@@ -240,6 +259,7 @@ def post_investigate(body: AdhocOrderRequest):
             **kwargs,
         )
     except Exception:
+        logger.exception("ad-hoc investigation failed unexpectedly")
         raise HTTPException(status_code=500, detail="Investigation failed unexpectedly.")
 
 

@@ -28,6 +28,7 @@ Authority model (deliberate, and worth defending live):
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
@@ -43,6 +44,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 # loaded regardless of which entry point imports it first (a CLI run,
 # the FastAPI app, or a one-off script).
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 from analytics import load_data, get_order_investigation, get_adhoc_investigation
 from decision_engine import DecisionResult, decide
@@ -197,7 +200,14 @@ def build_llm_narrative(
             },
         ],
         response_format=InvestigationNarrative,
-        temperature=0.0,
+        # No temperature override: newer "reasoning" models (e.g.
+        # gpt-5-mini, set via INVESTIGATION_AGENT_MODEL) reject any
+        # value other than their default (1) and error out - this
+        # silently broke every LLM narrative call, falling back to the
+        # template every time, until logging (see api.py) surfaced the
+        # actual 400 in the console. The decision itself is deterministic
+        # regardless of what this call returns, so there's nothing to
+        # lose by leaving sampling at the model's default here.
     )
 
     parsed = resp.choices[0].message.parsed
@@ -213,6 +223,12 @@ def build_llm_narrative(
 
 class InvestigationReport(BaseModel):
     order_id: str
+    # Which of the 10 named demo scenarios this order was constructed
+    # for (see data_generator.py's special_scenarios), if any - None for
+    # a plain NORMAL order or an ad hoc one. Not used by decide() itself;
+    # this is purely so the UI can label what's on screen for a reviewer
+    # or a live demo, the same tag OrderPicker already shows in the list.
+    scenario: Optional[str] = None
     decision: Literal["RELEASE", "HOLD_FOR_VERIFICATION", "ESCALATE"]
     risk_level: Literal["LOW", "MEDIUM", "HIGH"]
     confidence: float
@@ -266,13 +282,18 @@ def _run_pipeline(
     try:
         narrative = build_llm_narrative(investigation, decision, cases)
         narrative_source = "llm"
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "[%s] LLM narrative failed for %s, falling back to template: %s",
+            caller, order_id, exc,
+        )
         narrative = build_template_narrative(decision, cases)
         narrative_source = "template_fallback"
     timing["narrative_ms"] = round((time.perf_counter() - t0) * 1000, 1)
 
     report = InvestigationReport(
         order_id=order_id,
+        scenario=investigation["order"].get("scenario"),
         decision=decision.decision,
         risk_level=decision.risk_level,
         confidence=decision.confidence,
@@ -303,11 +324,14 @@ def _run_pipeline(
     if report.decision != "RELEASE":
         try:
             report.ticket_id = create_ticket(report)
+            logger.info(
+                "[%s] escalation ticket %s opened for %s (decision=%s)",
+                caller, report.ticket_id, order_id, report.decision,
+            )
         except Exception as exc:
-            print(
-                f"[{caller}] escalation ticket not created for "
-                f"{order_id}: {exc}",
-                file=sys.stderr,
+            logger.warning(
+                "[%s] escalation ticket not created for %s: %s",
+                caller, order_id, exc,
             )
             report.ticket_id = None
 

@@ -26,6 +26,7 @@ Design choices, and why:
 
 from __future__ import annotations
 
+import logging
 import os
 
 # Must be set before sentence-transformers / huggingface_hub import to
@@ -35,11 +36,23 @@ os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
 os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
 os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+# The model is already cached locally after the first successful run -
+# without this, every process start still makes a round of live HTTP
+# HEAD/GET calls to huggingface.co just to revalidate the cache, adding
+# a couple of minutes to startup and turning a flaky venue wifi
+# connection into a live-demo failure mode for something that is
+# supposed to have "zero network dependency at query time". Offline
+# mode skips all of that and reads the cache directly.
+os.environ.setdefault("HF_HUB_OFFLINE", "1")
+os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+
 from typing import Any, Dict, List, Optional
 
 import chromadb
 import pandas as pd
 from chromadb.utils import embedding_functions
+
+logger = logging.getLogger(__name__)
 
 DATA_DIR = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
@@ -232,12 +245,21 @@ def retrieve_similar_cases(
 
     if not same_lane["ids"] or not same_lane["ids"][0]:
         used_fallback = True
+        logger.info(
+            "no same-lane cases for pincode=%s courier=%s, falling back to "
+            "semantic-only search across all lanes",
+            order["pincode"], order["courier_id"],
+        )
         result = collection.query(
             query_texts=[query_text],
             n_results=min(candidate_pool, collection.count()),
         )
 
     if not result["ids"] or not result["ids"][0]:
+        logger.info(
+            "no historical cases retrieved at all for pincode=%s courier=%s",
+            order["pincode"], order["courier_id"],
+        )
         return []
 
     candidates = []

@@ -33,6 +33,7 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 import os
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
@@ -44,6 +45,8 @@ if TYPE_CHECKING:
     from investigation_agent import InvestigationReport
 
 load_dotenv()
+
+logger = logging.getLogger(__name__)
 
 DB_URL = os.environ.get("SUPABASE_DB_URL")
 
@@ -159,6 +162,7 @@ def create_ticket(report: "InvestigationReport") -> Optional[str]:
     finally:
         conn.close()
 
+    logger.info("ticket %s upserted for order %s (decision=%s)", ticket_id, report.order_id, report.decision)
     return ticket_id
 
 
@@ -203,6 +207,10 @@ def resolve_ticket(ticket_id: str, resolved_by: str, resolution_note: str) -> bo
             )
             updated = cur.rowcount > 0
         conn.commit()
+        if updated:
+            logger.info("ticket %s resolved by %s", ticket_id, resolved_by)
+        else:
+            logger.warning("resolve attempted for unknown ticket %s", ticket_id)
         return updated
     finally:
         conn.close()

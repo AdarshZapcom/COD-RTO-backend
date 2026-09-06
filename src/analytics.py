@@ -1,6 +1,9 @@
+import logging
 import os
 import time
 import pandas as pd
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -12,6 +15,30 @@ DATA_DIR = os.path.join(
     "data",
     "generated"
 )
+
+# ============================================================
+# SIGNAL THRESHOLDS
+#
+# Deliberately chosen cutoffs, not statistically fit against a larger
+# real dataset (see the architecture note's "Known limits") - named
+# here instead of left as bare literals in compare_signals() so a
+# reviewer can see and defend every one of them in one place.
+# ============================================================
+
+PINCODE_HIGH_RTO_7D = 0.20            # pincode 7d RTO rate treated as "high"
+COURIER_HIGH_RTO_7D = 0.15            # courier 7d RTO rate treated as "elevated"
+COURIER_PINCODE_HIGH_RTO_7D = 0.20    # courier x pincode 7d RTO rate treated as "high"
+DETERIORATION_MULTIPLIER = 1.5        # 7d rate vs 30d baseline ratio counted as "deteriorating"
+PINCODE_DETERIORATION_FLOOR = 0.10    # below this, a 1.5x jump is noise, not signal
+COURIER_DETERIORATION_FLOOR = 0.10
+COURIER_PINCODE_DETERIORATION_FLOOR = 0.12
+
+CUSTOMER_MIN_RTO_FOR_RISK_SIGNAL = 2       # previous RTOs counted as risk evidence
+CUSTOMER_MIN_ORDERS_FOR_TRACK_RECORD = 5   # previous orders counted as a track record
+CUSTOMER_MAX_RTO_FOR_CLEAN_RECORD = 1      # previous RTOs still counted as "clean"
+
+SAMPLE_SIZE_VERY_SMALL = 5   # below this, a rate is not trustworthy at all
+SAMPLE_SIZE_LIMITED = 20     # below this (but >= very small), flagged as thin
 
 
 # ============================================================
@@ -353,12 +380,12 @@ def check_data_quality(
 
         if pd.notna(sample_size):
 
-            if sample_size < 5:
+            if sample_size < SAMPLE_SIZE_VERY_SMALL:
                 warnings.append(
                     f"{name}: very small sample size ({int(sample_size)})"
                 )
 
-            elif sample_size < 20:
+            elif sample_size < SAMPLE_SIZE_LIMITED:
                 warnings.append(
                     f"{name}: limited sample size ({int(sample_size)})"
                 )
@@ -394,15 +421,15 @@ def compare_signals(
         previous_rto = customer_signal.get("previous_rto", 0)
         previous_orders = customer_signal.get("previous_orders", 0)
 
-        if pd.notna(previous_rto) and previous_rto >= 2:
+        if pd.notna(previous_rto) and previous_rto >= CUSTOMER_MIN_RTO_FOR_RISK_SIGNAL:
             supporting.append(
                 f"Customer has {int(previous_rto)} previous RTOs"
             )
 
         if (
             pd.notna(previous_orders)
-            and previous_orders >= 5
-            and previous_rto <= 1
+            and previous_orders >= CUSTOMER_MIN_ORDERS_FOR_TRACK_RECORD
+            and previous_rto <= CUSTOMER_MAX_RTO_FOR_CLEAN_RECORD
         ):
             counter.append(
                 "Customer has an established successful order history"
@@ -428,7 +455,7 @@ def compare_signals(
         rto_30 = pincode_signal.get("rto_rate_30d")
         trend = pincode_signal.get("trend")
 
-        if pd.notna(rto_7) and rto_7 >= 0.20:
+        if pd.notna(rto_7) and rto_7 >= PINCODE_HIGH_RTO_7D:
             supporting.append(
                 f"Pincode has high recent RTO ({rto_7:.0%} in 7d)"
             )
@@ -436,8 +463,8 @@ def compare_signals(
         if (
             pd.notna(rto_7)
             and pd.notna(rto_30)
-            and rto_7 > rto_30 * 1.5
-            and rto_7 >= 0.10
+            and rto_7 > rto_30 * DETERIORATION_MULTIPLIER
+            and rto_7 >= PINCODE_DETERIORATION_FLOOR
         ):
             supporting.append(
                 "Pincode RTO is deteriorating rapidly"
@@ -458,7 +485,7 @@ def compare_signals(
         rto_30 = courier_signal.get("rto_rate_30d")
         trend = courier_signal.get("trend")
 
-        if pd.notna(rto_7) and rto_7 >= 0.15:
+        if pd.notna(rto_7) and rto_7 >= COURIER_HIGH_RTO_7D:
             supporting.append(
                 f"Courier has elevated recent RTO ({rto_7:.0%} in 7d)"
             )
@@ -466,8 +493,8 @@ def compare_signals(
         if (
             pd.notna(rto_7)
             and pd.notna(rto_30)
-            and rto_7 > rto_30 * 1.5
-            and rto_7 >= 0.10
+            and rto_7 > rto_30 * DETERIORATION_MULTIPLIER
+            and rto_7 >= COURIER_DETERIORATION_FLOOR
         ):
             supporting.append(
                 "Courier RTO is deteriorating"
@@ -483,7 +510,7 @@ def compare_signals(
         rto_30 = courier_pincode_signal.get("rto_rate_30d")
         trend = courier_pincode_signal.get("trend")
 
-        if pd.notna(rto_7) and rto_7 >= 0.20:
+        if pd.notna(rto_7) and rto_7 >= COURIER_PINCODE_HIGH_RTO_7D:
             supporting.append(
                 f"Courier x pincode has high recent RTO ({rto_7:.0%})"
             )
@@ -496,8 +523,8 @@ def compare_signals(
         if (
             pd.notna(rto_7)
             and pd.notna(rto_30)
-            and rto_7 > rto_30 * 1.5
-            and rto_7 >= 0.12
+            and rto_7 > rto_30 * DETERIORATION_MULTIPLIER
+            and rto_7 >= COURIER_PINCODE_DETERIORATION_FLOOR
         ):
             supporting.append(
                 "Courier x pincode performance is deteriorating"
@@ -597,6 +624,10 @@ def build_investigation(data, order, customer_id, pincode, courier_id):
             "payment_type": order.get("payment_type"),
             "is_first_order": order.get("is_first_order"),
             "address_verified": order.get("address_verified"),
+            # None for ad hoc orders (never have this column) and for
+            # real orders with no special scenario tag (plain NaN in
+            # orders.csv) - pd.notna() treats both the same way.
+            "scenario": order.get("scenario") if pd.notna(order.get("scenario")) else None,
         },
 
         "customer": customer_signal,

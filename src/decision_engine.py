@@ -19,6 +19,7 @@ Design principle (see project notes):
 
 from __future__ import annotations
 
+import logging
 from typing import List, Literal
 
 import pandas as pd
@@ -26,8 +27,18 @@ from pydantic import BaseModel
 
 from analytics import load_data, get_order_investigation
 
+logger = logging.getLogger(__name__)
+
 Decision = Literal["RELEASE", "HOLD_FOR_VERIFICATION", "ESCALATE"]
 RiskLevel = Literal["LOW", "MEDIUM", "HIGH"]
+
+# Named so the risk-level rule is defensible in one place rather than
+# bare literals inline in compute_risk_level().
+HIGH_RISK_SUPPORTING_COUNT = 3   # this many supporting-evidence items alone -> HIGH
+MEDIUM_RISK_SUPPORTING_COUNT = 1
+
+MIN_COURIER_PINCODE_SAMPLE = 5   # below this, the lane's own rate isn't trustworthy
+MIN_CUSTOMER_ORDER_HISTORY = 3   # below this, the customer has no real track record
 
 
 class DecisionResult(BaseModel):
@@ -86,10 +97,10 @@ def compute_risk_level(investigation) -> RiskLevel:
         and cp.get("trend") == "SEVERE_DETERIORATION"
     )
 
-    if severe or supporting >= 3:
+    if severe or supporting >= HIGH_RISK_SUPPORTING_COUNT:
         return "HIGH"
 
-    if supporting >= 1:
+    if supporting >= MEDIUM_RISK_SUPPORTING_COUNT:
         return "MEDIUM"
 
     return "LOW"
@@ -118,7 +129,7 @@ def compute_uncertainty_flags(data, investigation) -> List[str]:
     if (
         cp.get("found")
         and pd.notna(cp.get("sample_size"))
-        and cp["sample_size"] < 5
+        and cp["sample_size"] < MIN_COURIER_PINCODE_SAMPLE
     ):
         flags.append(
             f"Courier x pincode sample size is very small "
@@ -129,7 +140,7 @@ def compute_uncertainty_flags(data, investigation) -> List[str]:
     if (
         customer.get("found")
         and pd.notna(customer.get("previous_orders"))
-        and customer["previous_orders"] < 3
+        and customer["previous_orders"] < MIN_CUSTOMER_ORDER_HISTORY
     ):
         flags.append(
             "Customer has very limited order history (fewer than 3 orders)"
@@ -239,11 +250,16 @@ def decide(data, investigation) -> DecisionResult:
     evidence_sufficient = len(flags) == 0
 
     def result(decision, reason) -> DecisionResult:
+        confidence = compute_confidence(investigation, decision, flags)
+        logger.info(
+            "order=%s decision=%s risk=%s confidence=%.2f flags=%d",
+            order["order_id"], decision, risk, confidence, len(flags),
+        )
         return DecisionResult(
             order_id=order["order_id"],
             decision=decision,
             risk_level=risk,
-            confidence=compute_confidence(investigation, decision, flags),
+            confidence=confidence,
             reason=reason,
             supporting_evidence=supporting,
             counter_evidence=counter,
