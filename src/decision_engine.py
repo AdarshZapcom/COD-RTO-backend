@@ -145,6 +145,62 @@ def compute_uncertainty_flags(data, investigation) -> List[str]:
     return flags
 
 
+def compute_confidence(investigation, decision: Decision, flags: List[str]) -> float:
+    """
+    Confidence in the call actually made, derived from the evidence
+    behind it - not a fixed constant per decision branch. Bands per
+    decision are kept non-overlapping (ESCALATE strictly below RELEASE)
+    so a hedged call never reads as more confident than a clean,
+    verified one - see stress_test.py invariant 7, which checks this
+    globally across every investigation run.
+    """
+
+    quality = investigation["data_quality"]
+    warning_penalty = min(0.15, 0.03 * len(quality.get("warnings", [])))
+
+    cp = investigation["courier_pincode"]
+    customer = investigation["customer"]
+
+    def sample_score(signal) -> float:
+        if not signal.get("found"):
+            return 0.0
+        n = signal.get("sample_size")
+        if n is None or pd.isna(n):
+            return 0.0
+        if n >= 50:
+            return 1.0
+        if n >= 20:
+            return 0.7
+        if n >= 5:
+            return 0.35
+        return 0.1
+
+    sample_avg = (sample_score(cp) + sample_score(customer)) / 2
+
+    if decision == "ESCALATE":
+        low, high = 0.15, 0.45
+        # More/stronger uncertainty flags make ESCALATE itself a
+        # clearer-cut call, not a wilder guess - confidence rises with
+        # the flag count within this band, capped at 4 flags.
+        strength = min(1.0, len(flags) / 4)
+        return round(low + (high - low) * strength, 2)
+
+    if decision == "HOLD_FOR_VERIFICATION":
+        low, high = 0.45, 0.80
+        conf = low + (high - low) * sample_avg - warning_penalty
+        return round(max(low, min(high, conf)), 2)
+
+    # RELEASE
+    low, high = 0.70, 0.95
+    verified_bonus = 0.0
+    if customer.get("phone_verified") is True:
+        verified_bonus += 0.05
+    if customer.get("address_verified") is True:
+        verified_bonus += 0.05
+    conf = low + (high - low) * sample_avg + verified_bonus - warning_penalty
+    return round(max(low, min(high, conf)), 2)
+
+
 def context_disruption_notes(investigation) -> List[str]:
     """
     Documented operational events (weather, courier capacity, local
@@ -182,12 +238,12 @@ def decide(data, investigation) -> DecisionResult:
     flags = compute_uncertainty_flags(data, investigation)
     evidence_sufficient = len(flags) == 0
 
-    def result(decision, confidence, reason) -> DecisionResult:
+    def result(decision, reason) -> DecisionResult:
         return DecisionResult(
             order_id=order["order_id"],
             decision=decision,
             risk_level=risk,
-            confidence=confidence,
+            confidence=compute_confidence(investigation, decision, flags),
             reason=reason,
             supporting_evidence=supporting,
             counter_evidence=counter,
@@ -200,7 +256,6 @@ def decide(data, investigation) -> DecisionResult:
     if quality["issues"]:
         return result(
             "ESCALATE",
-            0.30,
             "Critical signal data is missing for this order - an "
             "automated decision would be guessing rather than reasoning.",
         )
@@ -212,7 +267,6 @@ def decide(data, investigation) -> DecisionResult:
     if comparison["supporting_count"] >= 2 and comparison["counter_count"] >= 2:
         return result(
             "HOLD_FOR_VERIFICATION",
-            0.55,
             "Supporting and counter-evidence are both substantial and "
             "point in different directions - plausibly legitimate, but "
             "the risk signal is real enough to verify before releasing.",
@@ -235,7 +289,6 @@ def decide(data, investigation) -> DecisionResult:
             )
         return result(
             "HOLD_FOR_VERIFICATION",
-            0.75,
             reason,
         )
 
@@ -245,7 +298,6 @@ def decide(data, investigation) -> DecisionResult:
     if not evidence_sufficient:
         return result(
             "ESCALATE",
-            0.40,
             "Not enough reliable track record to make a confident "
             "automated call (" + "; ".join(flags) + ") - this needs a "
             "human, independent of whether the order itself looks risky.",
@@ -257,7 +309,6 @@ def decide(data, investigation) -> DecisionResult:
     if risk == "MEDIUM":
         return result(
             "HOLD_FOR_VERIFICATION",
-            0.65,
             "Some risk signal present, backed by a sufficient track "
             "record, without strong counter-evidence - verify before "
             "releasing.",
@@ -268,7 +319,6 @@ def decide(data, investigation) -> DecisionResult:
     # ------------------------------------------------------
     return result(
         "RELEASE",
-        0.85,
         "Signals consistently indicate low risk, and the evidence "
         "behind that read is sufficient and reliable.",
     )
