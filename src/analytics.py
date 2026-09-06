@@ -359,9 +359,27 @@ def check_data_quality(
     for name, signal in signals:
 
         if not signal.get("found", False):
-            issues.append(
-                f"{name}: data not available"
-            )
+            if name == "customer":
+                # A brand-new customer (no id in customers.csv at all) is
+                # the norm, not a rare gap - a real COD platform sees
+                # thousands of genuine first-time buyers a day. Treating
+                # it as a hard, unconditional escalation trigger - the
+                # same way a missing pincode or missing courier is,
+                # both genuinely rare since those universes are small
+                # and slow-changing - would route a huge fraction of
+                # first-time-buyer volume to a human reviewer for no
+                # proportionate benefit. It's still a real gap worth
+                # surfacing (a warning, and a small confidence penalty -
+                # see decision_engine.compute_confidence), just not one
+                # that should block automatically on its own; the other
+                # three dimensions' signals carry the decision instead.
+                warnings.append(
+                    f"{name}: no order history (new customer)"
+                )
+            else:
+                issues.append(
+                    f"{name}: data not available"
+                )
             continue
 
         if signal.get("data_quality") == "MISSING":

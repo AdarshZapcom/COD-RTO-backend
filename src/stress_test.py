@@ -30,8 +30,10 @@ Invariants checked (see the task spec for the authoritative list):
     1. confidence is always in [0, 1]
     2. every ESCALATE has a non-empty uncertainty_flags list
     3. a lane with trend == SEVERE_DETERIORATION never results in RELEASE
-    4. an unknown customer, pincode, or courier id always results in
-       ESCALATE (never RELEASE, never HOLD_FOR_VERIFICATION)
+    4. an unknown pincode or courier id always results in ESCALATE
+       (never RELEASE, never HOLD_FOR_VERIFICATION) - an unknown
+       customer alone is deliberately exempt, see
+       inv_unknown_dimension_escalates()
     5. courier_pincode.data_quality == "MISSING" always results in ESCALATE
     6. supporting_count >= 2 and counter_count >= 2 always results in
        HOLD_FOR_VERIFICATION, never RELEASE or ESCALATE - except when
@@ -92,13 +94,24 @@ def inv_severe_never_release(investigation, decision: DecisionResult) -> Optiona
 
 
 def inv_unknown_dimension_escalates(investigation, decision: DecisionResult) -> Optional[str]:
-    customer = investigation.get("customer", {}) or {}
+    """
+    An unknown pincode or unknown courier always escalates - both
+    universes are small and slow-changing, so either being unrecognized
+    is genuinely rare and worth a hard stop. An unknown *customer* alone
+    is deliberately excluded here: a brand-new customer is the common
+    case (real COD platforms see thousands of genuine first-time buyers
+    a day), so decision_engine no longer treats it as an unconditional
+    escalate trigger by itself - see analytics.check_data_quality's and
+    decision_engine.compute_uncertainty_flags's matching "new customer"
+    special case. A customer-only-unknown order is expected to fall
+    through to whatever the pincode/courier/lane signals say instead.
+    """
     pincode = investigation.get("pincode", {}) or {}
     courier = investigation.get("courier", {}) or {}
 
     unknown_dims = [
         name
-        for name, sig in (("customer", customer), ("pincode", pincode), ("courier", courier))
+        for name, sig in (("pincode", pincode), ("courier", courier))
         if not sig.get("found", False)
     ]
 
