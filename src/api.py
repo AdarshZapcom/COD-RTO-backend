@@ -31,12 +31,15 @@ Run:
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+logger = logging.getLogger("find_the_signal.api")
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
@@ -217,6 +220,7 @@ def get_order_investigate(order_id: str):
     except ValueError:
         raise HTTPException(status_code=404, detail=f"Order not found: {order_id}")
     except Exception:
+        logger.exception("GET /orders/%s/investigate failed", order_id)
         raise HTTPException(status_code=500, detail="Investigation failed unexpectedly.")
 
 
@@ -240,6 +244,7 @@ def post_investigate(body: AdhocOrderRequest):
             **kwargs,
         )
     except Exception:
+        logger.exception("POST /investigate failed")
         raise HTTPException(status_code=500, detail="Investigation failed unexpectedly.")
 
 
@@ -257,6 +262,7 @@ def get_insights(
             get_data(), min_sample=min_sample, delta_threshold=delta_threshold
         )
     except Exception:
+        logger.exception("GET /insights failed")
         raise HTTPException(status_code=500, detail="Insight scan failed unexpectedly.")
 
 
@@ -275,6 +281,7 @@ def get_tickets(status: str = Query("OPEN")):
     try:
         return list_open_tickets()
     except Exception:
+        logger.exception("GET /tickets failed")
         raise HTTPException(status_code=503, detail="Ticketing store unavailable.")
 
 
@@ -287,6 +294,7 @@ def post_ticket_resolve(ticket_id: str, body: TicketResolveRequest):
     try:
         found = resolve_ticket(ticket_id, body.resolved_by, body.resolution_note)
     except Exception:
+        logger.exception("POST /tickets/%s/resolve failed", ticket_id)
         raise HTTPException(status_code=503, detail="Ticketing store unavailable.")
 
     if not found:
