@@ -25,6 +25,8 @@ from typing import List, Literal, Optional
 import pandas as pd
 from pydantic import BaseModel, ValidationError
 
+from analytics import humanize_label
+
 logger = logging.getLogger(__name__)
 
 Severity = Literal["HIGH", "MEDIUM", "LOW_SAMPLE"]
@@ -69,7 +71,7 @@ def _possible_cause(events: pd.DataFrame, pincode: str, courier_id: str) -> Opti
         return None
 
     descriptions = [
-        f"{row.get('event_type')} on {row.get('date')} "
+        f"{humanize_label(row.get('event_type'))} on {row.get('date')} "
         f"({row.get('severity')} severity): {row.get('description')}"
         for _, row in matches.iterrows()
     ]

@@ -25,7 +25,7 @@ from typing import List, Literal
 import pandas as pd
 from pydantic import BaseModel
 
-from analytics import load_data, get_order_investigation
+from analytics import load_data, get_order_investigation, humanize_label
 
 logger = logging.getLogger(__name__)
 
@@ -250,7 +250,7 @@ def context_disruption_notes(investigation) -> List[str]:
     for event in investigation.get("context_events", []):
         if event.get("severity") in ("HIGH", "MEDIUM"):
             notes.append(
-                f"Documented {event.get('event_type')} on "
+                f"Documented {humanize_label(event.get('event_type'))} on "
                 f"{event.get('date')} ({event.get('severity')} severity) "
                 "may explain part of the recent dip"
             )

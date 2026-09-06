@@ -16,6 +16,29 @@ DATA_DIR = os.path.join(
     "generated"
 )
 
+
+# ============================================================
+# TEXT FORMATTING
+# ============================================================
+
+def humanize_label(value) -> str:
+    """
+    Convert a SCREAMING_SNAKE_CASE constant (event_type, decision, etc.)
+    into human-readable text for display, e.g. "HEAVY_RAIN" -> "Heavy
+    rain", "HOLD_FOR_VERIFICATION" -> "Hold for verification". Any
+    narrative text built for a human reviewer should pass enum-like
+    fields through this rather than interpolating them raw - a jury
+    member reading "COURIER_DISRUPTION" in a sentence reads as an
+    unfinished template, not a considered explanation.
+
+    Deliberately NOT used for acronym-like codes (e.g. "RTO") that would
+    be mangled by naive capitalization - only for constants that are
+    genuinely underscore-joined ordinary words.
+    """
+    if not value or not isinstance(value, str):
+        return ""
+    return value.replace("_", " ").capitalize()
+
 # ============================================================
 # SIGNAL THRESHOLDS
 #

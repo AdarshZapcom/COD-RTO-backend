@@ -47,7 +47,7 @@ load_dotenv()
 
 logger = logging.getLogger(__name__)
 
-from analytics import load_data, get_order_investigation, get_adhoc_investigation
+from analytics import load_data, get_order_investigation, get_adhoc_investigation, humanize_label
 from decision_engine import DecisionResult, decide
 from case_memory import retrieve_similar_cases
 from ticketing import create_ticket
@@ -103,7 +103,7 @@ def build_template_narrative(
         lane_note = "the same courier/pincode lane" if top["same_lane"] else "a different lane (no same-lane precedent)"
         parts.append(
             f"Most similar historical case is {top['case_id']} from {lane_note}: "
-            f"decision was {top['metadata']['decision']}, "
+            f"decision was {humanize_label(top['metadata']['decision'])}, "
             f"actual outcome was {top['metadata']['actual_outcome']}."
         )
         most_relevant_case_id = top["case_id"]
