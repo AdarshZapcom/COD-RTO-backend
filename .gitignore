@@ -5,8 +5,11 @@ node_modules/
 dist/
 build/
 .DS_Store
+Thumbs.db
 *.log
 .env
+.vscode/
+.idea/
 
 # Regenerated vector index (rebuilt automatically from
 # data/generated/historical_cases.csv on first run)
