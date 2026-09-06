@@ -139,9 +139,10 @@ def compute_uncertainty_flags(data, investigation) -> List[str]:
         and pd.notna(cp.get("sample_size"))
         and cp["sample_size"] < MIN_COURIER_PINCODE_SAMPLE
     ):
+        n = int(cp["sample_size"])
         flags.append(
             f"Courier x pincode sample size is very small "
-            f"(n={int(cp['sample_size'])})"
+            f"(based on only {n} past order{'s' if n != 1 else ''})"
         )
 
     customer = investigation["customer"]
