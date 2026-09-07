@@ -46,7 +46,7 @@ OUTPUT_DIR = os.path.join(
 )
 
 NUM_CUSTOMERS = 100
-NUM_ORDERS = 500
+NUM_ORDERS = 3000
 NUM_PINCODES = 20
 NUM_COURIERS = 5
 NUM_SELLERS = 10
@@ -1069,6 +1069,59 @@ def create_events():
             "description": (
                 "Warehouse processing delay temporarily "
                 "increased delivery time."
+            ),
+        },
+        # Additional context events on lanes not tied to any named
+        # scenario - more of the documented-disruption "noise" a real
+        # ops history would carry, without touching the specific
+        # rows the named scenarios (see docs/business-scenarios.md)
+        # depend on matching exactly.
+        {
+            "event_id": "EVT-005",
+            "date": "2026-08-25",
+            "pincode": "560015",
+            "courier_id": "C03",
+            "event_type": "FESTIVAL_SURGE",
+            "severity": "MEDIUM",
+            "description": (
+                "Festival-season order surge temporarily "
+                "strained delivery capacity."
+            ),
+        },
+        {
+            "event_id": "EVT-006",
+            "date": "2026-08-18",
+            "pincode": "560100",
+            "courier_id": "C01",
+            "event_type": "ROAD_CLOSURE",
+            "severity": "LOW",
+            "description": (
+                "Planned road maintenance caused minor "
+                "delivery delays."
+            ),
+        },
+        {
+            "event_id": "EVT-007",
+            "date": "2026-08-22",
+            "pincode": "560005",
+            "courier_id": "C02",
+            "event_type": "STRIKE",
+            "severity": "HIGH",
+            "description": (
+                "Regional transport strike disrupted delivery "
+                "operations for several days."
+            ),
+        },
+        {
+            "event_id": "EVT-008",
+            "date": "2026-08-12",
+            "pincode": "560017",
+            "courier_id": "C04",
+            "event_type": "SORTING_FACILITY_ISSUE",
+            "severity": "MEDIUM",
+            "description": (
+                "A sorting-facility outage temporarily delayed "
+                "outbound shipments."
             ),
         },
     ]

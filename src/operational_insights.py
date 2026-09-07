@@ -350,8 +350,13 @@ def main():
         and top.delta == expected["delta"]
     )
 
+    # Checks for the humanized text ("Heavy rain"/"Courier disruption"),
+    # not the raw event_type constants - possible_cause has gone through
+    # humanize_label() since this check was written; a raw-constant
+    # match would fail against a value this is deliberately no longer
+    # producing.
     cause_ok = top.possible_cause is not None and (
-        "HEAVY_RAIN" in top.possible_cause or "COURIER_DISRUPTION" in top.possible_cause
+        "Heavy rain" in top.possible_cause or "Courier disruption" in top.possible_cause
     )
 
     print(f"\nNumbers match spec   : {ok}")
