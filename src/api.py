@@ -17,7 +17,7 @@ Exactly 6 endpoints (see docs/tasks/05-fastapi-backend.md):
     GET  /orders/{order_id}/investigate
     POST /investigate
     GET  /insights?min_sample=&delta_threshold=
-    GET  /tickets?status=OPEN
+    GET  /tickets?status=OPEN|RESOLVED
     POST /tickets/{ticket_id}/resolve
 
 Data is loaded once into memory at startup (500 orders + supporting
@@ -53,7 +53,7 @@ from analytics import load_data
 from case_memory import warm_embedding_model
 from investigation_agent import InvestigationReport, investigate_adhoc, investigate_order
 from operational_insights import OperationalInsight, get_operational_insights
-from ticketing import count_open_tickets, list_open_tickets, resolve_ticket
+from ticketing import list_tickets, resolve_ticket
 
 # Configures the root logger once, at the actual process entry point -
 # every other module's `logging.getLogger(__name__)` propagates here,
@@ -397,21 +397,22 @@ def get_tickets(
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
 ):
-    if status.upper() != "OPEN":
-        # list_open_tickets() is the only query ticketing.py exposes today.
+    normalized_status = status.upper()
+    if normalized_status not in ("OPEN", "RESOLVED"):
         raise HTTPException(
             status_code=400,
-            detail="Only status=OPEN is supported.",
+            detail="Only status=OPEN or status=RESOLVED is supported.",
         )
     try:
         # X-Total-Count (not a body-shape change) lets the frontend render
         # real numbered pagination (page 1/2/3...) instead of an infinite
         # "load more" that never tells an operator how much is left -
         # the response body stays a plain array, matching every other
-        # list endpoint here.
-        total = count_open_tickets()
+        # list endpoint here. One list_tickets() call gets both the page
+        # and the total over a single DB connection (see its docstring).
+        rows, total = list_tickets(status=normalized_status, limit=limit, offset=offset)
         response.headers["X-Total-Count"] = str(total)
-        return list_open_tickets(limit=limit, offset=offset)
+        return rows
     except Exception:
         logger.exception("GET /tickets failed")
         raise HTTPException(status_code=503, detail="Ticketing store unavailable.")
