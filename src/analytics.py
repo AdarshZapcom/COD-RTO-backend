@@ -64,6 +64,15 @@ CUSTOMER_MAX_RTO_FOR_CLEAN_RECORD = 1      # previous RTOs still counted as "cle
 SAMPLE_SIZE_VERY_SMALL = 5   # below this, a rate is not trustworthy at all
 SAMPLE_SIZE_LIMITED = 20     # below this (but >= very small), flagged as thin
 
+# Matches data_generator.py's own synthetic ground-truth RTO formula
+# (order_value > 3000 adds +0.25 to the underlying risk score used to
+# generate outcomes) - not a separately-guessed number. An order value
+# alone is not risk-relevant (a regular's ₹4000 order is unremarkable);
+# it only matters paired with a thin/absent track record, which is
+# exactly the classic high-value-first-time-COD fraud pattern.
+ORDER_VALUE_HIGH = 3000
+CUSTOMER_THIN_HISTORY_FOR_HIGH_VALUE = 3   # previous_orders below this counts as "thin" here
+
 
 # ============================================================
 # LOAD DATA
@@ -508,11 +517,40 @@ def compare_signals(
     customer_signal,
     pincode_signal,
     courier_signal,
-    courier_pincode_signal
+    courier_pincode_signal,
+    order_value=None
 ):
 
     supporting = []
     counter = []
+
+    # -----------------------------
+    # ORDER VALUE
+    # -----------------------------
+    # order_value on its own is not a signal - a regular customer
+    # placing a ₹4000 order is unremarkable. It only becomes evidence
+    # paired with a thin/absent track record: an unusually large order
+    # from someone with little or no history is a well-established
+    # fraud pattern real COD platforms watch for, and this system
+    # previously ignored order_value entirely.
+    previous_orders_for_value_check = customer_signal.get("previous_orders")
+    customer_is_thin = (
+        not customer_signal.get("found")
+        or (
+            pd.notna(previous_orders_for_value_check)
+            and previous_orders_for_value_check < CUSTOMER_THIN_HISTORY_FOR_HIGH_VALUE
+        )
+    )
+    if (
+        order_value is not None
+        and pd.notna(order_value)
+        and order_value > ORDER_VALUE_HIGH
+        and customer_is_thin
+    ):
+        supporting.append(
+            f"High-value order (Rs {order_value:,.0f}) from a customer "
+            "with little to no order history - a common COD fraud pattern"
+        )
 
     # -----------------------------
     # CUSTOMER
@@ -755,7 +793,8 @@ def build_investigation(data, order, customer_id, pincode, courier_id):
         customer_signal,
         pincode_signal,
         courier_signal,
-        courier_pincode_signal
+        courier_pincode_signal,
+        order.get("order_value")
     )
 
     return {
