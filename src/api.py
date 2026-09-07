@@ -292,6 +292,7 @@ class TicketResolveResponse(BaseModel):
 
 @app.get("/orders", response_model=List[OrderSummary])
 def get_orders(
+    response: Response,
     scenario: Optional[str] = Query(None, description="Filter to this exact scenario value"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -300,6 +301,11 @@ def get_orders(
 
     if scenario is not None:
         orders = orders[orders["scenario"] == scenario]
+
+    # X-Total-Count reflects the filtered set (post-scenario, pre-page),
+    # matching GET /tickets' pattern - lets the frontend render real
+    # numbered pagination instead of an infinite "load more".
+    response.headers["X-Total-Count"] = str(len(orders))
 
     page = orders.iloc[offset : offset + limit]
 
