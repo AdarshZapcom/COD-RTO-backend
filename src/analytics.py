@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+import uuid
 import pandas as pd
 
 logger = logging.getLogger(__name__)
@@ -71,6 +72,60 @@ def load_data():
 
 
 # ============================================================
+# LOOKUP HELPERS
+# ============================================================
+
+def is_true(value) -> bool:
+    """
+    Robust truthiness check for a CSV-sourced boolean flag.
+
+    pandas loads a fully-populated bool column (phone_verified,
+    address_verified, ...) as numpy.bool_, and `numpy.bool_(True) is
+    True` is False - they are different objects, even though the value
+    is truthy. Any evidence-affecting flag must be checked with this
+    instead of `is True`/`is False`, or the flag is silently dead for
+    every row. NaN (missing) is treated as not-true, matching the
+    previous `is True` behaviour for absent data.
+    """
+    return bool(pd.notna(value) and value)
+
+
+def normalize_id(value):
+    """
+    Canonicalize a customer/courier id for comparison: trims
+    surrounding whitespace and upper-cases it, so "CUST-001 " or
+    "cust-001" still match the dataset's canonical "CUST-001" - a
+    lookup miss here silently misroutes a clean case into an
+    escalation with "data not available", which is worse than being
+    lenient about case/whitespace on an otherwise-correct id.
+    """
+    if value is None:
+        return value
+    return str(value).strip().upper()
+
+
+def normalize_pincode(value):
+    """
+    Canonicalize a pincode for comparison: strips whitespace and
+    collapses a float-shaped value ("560001.0", from a numeric JSON
+    payload or a string carrying a float suffix) down to its integer
+    string form, so a pincode matches regardless of the numeric/string
+    shape it arrives in - see AdhocOrderRequest's own documented
+    "str-or-int interchangeable" intent in api.py.
+    """
+    if value is None:
+        return value
+    text = str(value).strip()
+    try:
+        as_float = float(text)
+    except ValueError:
+        return text
+    if as_float.is_integer():
+        return str(int(as_float))
+    return text
+
+
+# ============================================================
 # CUSTOMER ANALYTICS
 # ============================================================
 
@@ -79,7 +134,7 @@ def get_customer_signal(data, customer_id):
     customers = data["customers"]
 
     row = customers[
-        customers["customer_id"] == customer_id
+        customers["customer_id"] == normalize_id(customer_id)
     ]
 
     if row.empty:
@@ -105,6 +160,12 @@ def get_customer_signal(data, customer_id):
         "phone_verified": row.get("phone_verified"),
         "address_verified": row.get("address_verified"),
         "customer_type": row.get("customer_type"),
+        # Customer order-history depth, consulted by
+        # decision_engine.compute_confidence()'s sample_score() so a
+        # customer with a long track record scores differently from
+        # one with almost none - previously never set here, so this
+        # signal's sample size was always treated as 0/unknown.
+        "sample_size": row.get("previous_orders"),
     }
 
 
@@ -117,7 +178,7 @@ def get_pincode_signal(data, pincode):
     pincodes = data["pincodes"]
 
     row = pincodes[
-        pincodes["pincode"].astype(str) == str(pincode)
+        pincodes["pincode"].astype(str) == normalize_pincode(pincode)
     ]
 
     if row.empty:
@@ -163,7 +224,7 @@ def get_courier_signal(data, courier_id):
     couriers = data["couriers"]
 
     row = couriers[
-        couriers["courier_id"] == courier_id
+        couriers["courier_id"] == normalize_id(courier_id)
     ]
 
     if row.empty:
@@ -210,9 +271,9 @@ def get_courier_pincode_signal(data, courier_id, pincode):
     df = data["courier_pincode"]
 
     row = df[
-        (df["courier_id"] == courier_id)
+        (df["courier_id"] == normalize_id(courier_id))
         &
-        (df["pincode"].astype(str) == str(pincode))
+        (df["pincode"].astype(str) == normalize_pincode(pincode))
     ]
 
     if row.empty:
@@ -310,11 +371,11 @@ def get_context_events(data, pincode, courier_id):
 
     rows = events[
         (
-            events["pincode"].astype(str) == str(pincode)
+            events["pincode"].astype(str) == normalize_pincode(pincode)
         )
         |
         (
-            events["courier_id"] == courier_id
+            events["courier_id"] == normalize_id(courier_id)
         )
     ]
 
@@ -435,12 +496,12 @@ def compare_signals(
                 "Customer has an established successful order history"
             )
 
-        if customer_signal.get("phone_verified") is True:
+        if is_true(customer_signal.get("phone_verified")):
             counter.append(
                 "Phone number is verified"
             )
 
-        if customer_signal.get("address_verified") is True:
+        if is_true(customer_signal.get("address_verified")):
             counter.append(
                 "Address is verified"
             )
@@ -539,6 +600,52 @@ def compare_signals(
 
 
 # ============================================================
+# PER-ORDER OVERRIDES
+# ============================================================
+
+def apply_order_overrides(customer_signal, order):
+    """
+    Let this specific order's own address_verified / is_first_order
+    values take precedence over the customer's stored profile for
+    evidence purposes - not just be echoed back as display-only order
+    metadata.
+
+    For real, generated orders this is a no-op: data_generator.py
+    derives both fields directly from the customer's profile at order
+    time (`is_first_order = previous_orders == 0`,
+    `address_verified = customer["address_verified"]`), so they
+    already agree. It matters for an ad hoc investigation
+    (`get_adhoc_investigation`), where an ops reviewer can explicitly
+    report a value that differs from - or fills in a gap in - the
+    stored profile for this one order, and that must actually change
+    the decision evidence, not just the read-only order summary.
+
+    is_first_order=True overrides previous_orders/previous_rto to 0,
+    mirroring data_generator.py's own definition of the field, so a
+    reviewer flagging "treat this as this customer's first order"
+    genuinely wipes any track record used to compute evidence/
+    confidence/uncertainty flags for this investigation.
+    """
+
+    if not customer_signal.get("found"):
+        return customer_signal
+
+    overridden = dict(customer_signal)
+
+    address_verified = order.get("address_verified")
+    if pd.notna(address_verified):
+        overridden["address_verified"] = address_verified
+
+    is_first_order = order.get("is_first_order")
+    if pd.notna(is_first_order) and is_true(is_first_order):
+        overridden["previous_orders"] = 0
+        overridden["previous_rto"] = 0
+        overridden["sample_size"] = 0
+
+    return overridden
+
+
+# ============================================================
 # FULL ORDER INVESTIGATION
 # ============================================================
 
@@ -566,6 +673,8 @@ def build_investigation(data, order, customer_id, pincode, courier_id):
         data,
         customer_id
     )
+
+    customer_signal = apply_order_overrides(customer_signal, order)
 
     pincode_signal = get_pincode_signal(
         data,
@@ -701,8 +810,13 @@ def get_adhoc_investigation(
     thin-data order would, and shows up as a data-quality issue that
     `decision_engine.decide()` already escalates on its own.
 
-    `order_id` defaults to a synthetic "ADHOC-<timestamp>" id when
-    not supplied. `**order_fields` accepts any of the same optional
+    `order_id` defaults to a synthetic "ADHOC-<timestamp>-<random>" id
+    when not supplied - the random suffix guarantees uniqueness even
+    when concurrent calls land in the same millisecond (a bare
+    millisecond timestamp is not unique under real concurrent load,
+    and ticketing.create_ticket() upserts on a ticket_id derived from
+    this id, so a collision here silently clobbers one investigation's
+    evidence with another's). `**order_fields` accepts any of the same optional
     order attributes `get_order_investigation` surfaces (seller_id,
     product_category, cod_amount, payment_type, is_first_order,
     address_verified) - anything not supplied is simply absent
@@ -723,7 +837,7 @@ def get_adhoc_investigation(
     """
 
     if order_id is None:
-        order_id = f"ADHOC-{int(time.time() * 1000)}"
+        order_id = f"ADHOC-{int(time.time() * 1000)}-{uuid.uuid4().hex[:12]}"
     elif not order_id.startswith("ADHOC-"):
         order_id = f"ADHOC-{order_id}"
 

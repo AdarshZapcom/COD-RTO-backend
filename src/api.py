@@ -32,7 +32,9 @@ Run:
 from __future__ import annotations
 
 import logging
+import math
 import os
+import re
 import sys
 from contextlib import asynccontextmanager
 from typing import Any, Dict, List, Optional
@@ -40,8 +42,11 @@ from typing import Any, Dict, List, Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from analytics import load_data
@@ -89,6 +94,60 @@ app.add_middleware(
 )
 
 
+def _json_safe(value: Any) -> Any:
+    """Recursively replace a non-finite float (NaN/Infinity/-Infinity)
+    with its string form so a dict/list is always safe to hand to
+    Starlette's JSONResponse, which renders with allow_nan=False."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return str(value)
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """
+    A rejected NaN/Infinity/-Infinity request value (order_value,
+    cod_amount, ...) is echoed back verbatim by Pydantic in each
+    error's "input" field. FastAPI's own default handler for this
+    exception hands that straight to JSONResponse - which, on this
+    Starlette version, renders with allow_nan=False and raises
+    ValueError deep inside the framework's error-handling machinery
+    itself. That secondary crash happens outside every try/except in
+    this file (it IS the error handler) and outside
+    unhandled_exception_handler above (a handler that itself raises
+    isn't retried by another handler), so it fell all the way through
+    to Starlette's bare text/plain 500 - the exact failure mode
+    reported for a NaN/-Infinity order_value, independent of whichever
+    validator actually rejects the value. Sanitizing the error content
+    here closes that regardless of which field or validator triggers it.
+    """
+    return JSONResponse(
+        status_code=422,
+        content={"detail": _json_safe(jsonable_encoder(exc.errors()))},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """
+    Last-resort safety net: FastAPI/Starlette's own default for an
+    exception with no more specific handler (HTTPException and
+    RequestValidationError already have their own, and still take
+    precedence over this) is a bare text/plain "Internal Server Error"
+    - inconsistent with every other error response this API returns
+    ({"detail": ...} JSON). This guarantees the same structured shape
+    even for a crash nothing here anticipated.
+    """
+    logger.exception("Unhandled exception for %s %s", request.method, request.url.path)
+    return JSONResponse(status_code=500, content={"detail": "Internal server error."})
+
+
 # ============================================================
 # DATA (loaded once at startup, matches analytics.load_data() pattern)
 # ============================================================
@@ -115,6 +174,25 @@ def _clean(value: Any) -> Any:
     except (TypeError, ValueError):
         pass
     return value
+
+
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x1f\x7f]")
+
+
+def _reject_control_chars(value: str, label: str) -> None:
+    """
+    A null byte (or other control character) in a path parameter isn't
+    a valid id under any circumstance - it's malformed/malicious input,
+    not a real lookup key. Reject it here with a 4xx before it reaches
+    psycopg2, which raises on a NUL byte in a text parameter; left
+    uncaught, that surfaced as a 503 "Ticketing store unavailable",
+    indistinguishable from a genuine outage.
+    """
+    if _CONTROL_CHAR_RE.search(value):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid {label}: control characters are not allowed.",
+        )
 
 
 def _clean_str(value: Any) -> Optional[str]:
@@ -172,6 +250,22 @@ class AdhocOrderRequest(BaseModel):
             return str(value)
         if isinstance(value, float) and value.is_integer():
             return str(int(value))
+        return value
+
+    @field_validator("order_value", "cod_amount", mode="after")
+    @classmethod
+    def _must_be_finite(cls, value: Optional[float]) -> Optional[float]:
+        """
+        Reject NaN/Infinity/-Infinity - these are valid JSON-parseable
+        float literals (Python's json module accepts them by default)
+        but not legitimate order values. Pydantic's own gt=0 constraint
+        does not reliably reject them (NaN/-Infinity comparisons are
+        not guaranteed to fail the same way a normal negative number
+        does), and letting one through crashes deep in the pipeline
+        with a raw, unhandled 500 instead of a clean 422.
+        """
+        if value is not None and not math.isfinite(value):
+            raise ValueError("must be a finite number")
         return value
 
 
@@ -306,6 +400,7 @@ def get_tickets(status: str = Query("OPEN")):
 
 @app.post("/tickets/{ticket_id}/resolve", response_model=TicketResolveResponse)
 def post_ticket_resolve(ticket_id: str, body: TicketResolveRequest):
+    _reject_control_chars(ticket_id, "ticket_id")
     try:
         found = resolve_ticket(ticket_id, body.resolved_by, body.resolution_note)
     except Exception:
