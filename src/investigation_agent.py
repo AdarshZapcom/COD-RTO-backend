@@ -232,6 +232,7 @@ class InvestigationReport(BaseModel):
     decision: Literal["RELEASE", "HOLD_FOR_VERIFICATION", "ESCALATE"]
     risk_level: Literal["LOW", "MEDIUM", "HIGH"]
     confidence: float
+    confidence_factors: List[str]
     reason: str
     supporting_evidence: List[str]
     counter_evidence: List[str]
@@ -297,6 +298,7 @@ def _run_pipeline(
         decision=decision.decision,
         risk_level=decision.risk_level,
         confidence=decision.confidence,
+        confidence_factors=decision.confidence_factors,
         reason=decision.reason,
         supporting_evidence=decision.supporting_evidence,
         counter_evidence=decision.counter_evidence,

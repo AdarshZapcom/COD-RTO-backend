@@ -166,15 +166,25 @@ def create_ticket(report: "InvestigationReport") -> Optional[str]:
     return ticket_id
 
 
-def list_open_tickets() -> List[Dict[str, Any]]:
-    """All OPEN tickets, most recently created first."""
+def list_open_tickets(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+    """
+    OPEN tickets, most recently created first, paginated.
+
+    Added because a live event/stress-test run can accumulate hundreds
+    of ad hoc tickets - rendering all of them unpaginated in the ops
+    view is a real live-demo scroll/perf risk, not just a cosmetic
+    concern. Defaults (limit=50) match GET /orders' own default so the
+    two paginated lists behave consistently.
+    """
     conn = _get_conn()
     try:
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 "SELECT * FROM escalation_tickets "
                 "WHERE status = 'OPEN' "
-                "ORDER BY created_at DESC"
+                "ORDER BY created_at DESC "
+                "LIMIT %s OFFSET %s",
+                (limit, offset),
             )
             rows = cur.fetchall()
         return [dict(row) for row in rows]

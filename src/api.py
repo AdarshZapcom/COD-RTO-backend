@@ -286,7 +286,11 @@ def get_insights(
 # ============================================================
 
 @app.get("/tickets", response_model=List[Dict[str, Any]])
-def get_tickets(status: str = Query("OPEN")):
+def get_tickets(
+    status: str = Query("OPEN"),
+    limit: int = Query(50, ge=1, le=500),
+    offset: int = Query(0, ge=0),
+):
     if status.upper() != "OPEN":
         # list_open_tickets() is the only query ticketing.py exposes today.
         raise HTTPException(
@@ -294,7 +298,7 @@ def get_tickets(status: str = Query("OPEN")):
             detail="Only status=OPEN is supported.",
         )
     try:
-        return list_open_tickets()
+        return list_open_tickets(limit=limit, offset=offset)
     except Exception:
         logger.exception("GET /tickets failed")
         raise HTTPException(status_code=503, detail="Ticketing store unavailable.")

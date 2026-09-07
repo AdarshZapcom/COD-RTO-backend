@@ -25,6 +25,13 @@ Test population:
     3. ~8 fully-unknown (customer_id, pincode, courier_id) triples that
        do not exist anywhere in the dataset, run through
        get_adhoc_investigation() (task 03).
+    4. ~11 adversarial, genuinely malformed inputs (absurd lengths,
+       injection-looking strings, unicode noise, out-of-range numbers)
+       through the same get_adhoc_investigation() path - the shape of
+       thing a live, unscripted jury curveball could plausibly type,
+       as opposed to population 3's well-formed-but-unknown values.
+       Each case is wrapped individually so an unhandled exception is
+       itself recorded as a violation rather than aborting the run.
 
 Invariants checked (see the task spec for the authoritative list):
     1. confidence is always in [0, 1]
@@ -450,6 +457,52 @@ def build_boundary_cases() -> List[Tuple[str, Dict[str, Any]]]:
     return cases
 
 
+def build_adversarial_cases() -> List[Dict[str, Any]]:
+    """
+    Genuinely malformed input, not just "unknown but well-formed" - the
+    shape of thing a live, unscripted jury curveball could plausibly
+    type into the ad hoc form: absurd lengths, injection-looking
+    strings, unicode noise, and out-of-range numbers. Population 3
+    above already proves an unknown-but-valid triple escalates
+    correctly; this proves the pipeline does not crash on input that
+    isn't even well-formed, run through get_adhoc_investigation()
+    directly (bypassing the API layer's pydantic validation) so this
+    exercises the analytics/decision pipeline's own robustness, not
+    just the HTTP boundary's.
+    """
+    return [
+        dict(case_id="ADV-very-long-customer-id",
+             customer_id="CUST-" + ("X" * 600), pincode=560001, courier_id="C01",
+             order_value=1000),
+        dict(case_id="ADV-unicode-customer-id",
+             customer_id="CUST-\U0001F600\U0001F389-ADVERSARIAL", pincode=560001,
+             courier_id="C01", order_value=1000),
+        dict(case_id="ADV-sql-injection-looking-customer-id",
+             customer_id="'; DROP TABLE orders; --", pincode=560001, courier_id="C01",
+             order_value=1000),
+        dict(case_id="ADV-script-injection-looking-customer-id",
+             customer_id="<script>alert(1)</script>", pincode=560001, courier_id="C01",
+             order_value=1000),
+        dict(case_id="ADV-whitespace-only-customer-id",
+             customer_id="   ", pincode=560001, courier_id="C01", order_value=1000),
+        dict(case_id="ADV-garbage-non-numeric-pincode",
+             customer_id="CUST-001", pincode="NOT-A-PINCODE", courier_id="C01",
+             order_value=1000),
+        dict(case_id="ADV-empty-string-courier-id",
+             customer_id="CUST-001", pincode=560001, courier_id="", order_value=1000),
+        dict(case_id="ADV-extreme-order-value",
+             customer_id="CUST-001", pincode=560001, courier_id="C01",
+             order_value=999999999999.99),
+        dict(case_id="ADV-zero-order-value",
+             customer_id="CUST-001", pincode=560001, courier_id="C01", order_value=0),
+        dict(case_id="ADV-negative-order-value",
+             customer_id="CUST-001", pincode=560001, courier_id="C01", order_value=-500),
+        dict(case_id="ADV-all-fields-garbage",
+             customer_id="<>'; --\U0001F480", pincode="???", courier_id="!!!",
+             order_value=-1),
+    ]
+
+
 def build_unknown_triple_cases() -> List[Dict[str, Any]]:
     """
     A handful of fully-unknown (customer_id, pincode, courier_id)
@@ -511,6 +564,61 @@ def run_population(data, label, cases_iter):
     return checked, confidences_by_decision, violations
 
 
+def run_adversarial_population(
+    data, label: str, specs: List[Dict[str, Any]]
+) -> Tuple[int, Dict[str, List[float]], List[Dict[str, Any]]]:
+    """
+    Like run_population(), but for genuinely malformed input where the
+    primary thing under test is "does this crash at all" - each case
+    runs get_adhoc_investigation() -> decide() inside its own try/except
+    so one case raising doesn't take down the whole harness, and an
+    unhandled exception is itself recorded as a violation (invariant
+    "0_no_unhandled_exception") rather than surfacing as a stack trace
+    that aborts the run before later cases are checked.
+    """
+    violations: List[Dict[str, Any]] = []
+    confidences_by_decision: Dict[str, List[float]] = {}
+    checked = 0
+
+    for spec in specs:
+        case_id = spec["case_id"]
+        checked += 1
+        try:
+            investigation = get_adhoc_investigation(
+                data,
+                customer_id=spec["customer_id"],
+                pincode=spec["pincode"],
+                courier_id=spec["courier_id"],
+                order_value=spec["order_value"],
+                order_id=case_id,
+            )
+            decision = decide(data, investigation)
+        except Exception as exc:  # noqa: BLE001 - the crash itself is the finding
+            violations.append({
+                "population": label,
+                "case_id": case_id,
+                "invariant": "0_no_unhandled_exception",
+                "message": f"{type(exc).__name__}: {exc}",
+                "decision": "-",
+                "confidence": "-",
+            })
+            continue
+
+        confidences_by_decision.setdefault(decision.decision, []).append(decision.confidence)
+
+        for name, msg in run_invariants(investigation, decision):
+            violations.append({
+                "population": label,
+                "case_id": case_id,
+                "invariant": name,
+                "message": msg,
+                "decision": decision.decision,
+                "confidence": decision.confidence,
+            })
+
+    return checked, confidences_by_decision, violations
+
+
 def merge_confidence_maps(*maps: Dict[str, List[float]]) -> Dict[str, List[float]]:
     merged: Dict[str, List[float]] = {}
     for m in maps:
@@ -536,7 +644,7 @@ def main():
             investigation = get_order_investigation(data, order_id)
             yield order_id, investigation
 
-    print(f"\n[1/3] Running decide() against all {len(orders)} real orders ...")
+    print(f"\n[1/4] Running decide() against all {len(orders)} real orders ...")
     n_real, conf_real, viol_real = run_population(data, "real_orders", real_orders_iter())
     print(f"      checked: {n_real}   violations: {len(viol_real)}")
 
@@ -544,7 +652,7 @@ def main():
     # Population 2: synthetic boundary-value investigations
     # ------------------------------------------------------------
     boundary_cases = build_boundary_cases()
-    print(f"\n[2/3] Running decide() against {len(boundary_cases)} synthetic "
+    print(f"\n[2/4] Running decide() against {len(boundary_cases)} synthetic "
           f"boundary-value cases ...")
     n_bnd, conf_bnd, viol_bnd = run_population(data, "boundary", iter(boundary_cases))
     print(f"      checked: {n_bnd}   violations: {len(viol_bnd)}")
@@ -566,18 +674,27 @@ def main():
             )
             yield spec["case_id"], investigation
 
-    print(f"\n[3/3] Running decide() against {len(unknown_specs)} fully-unknown "
+    print(f"\n[3/4] Running decide() against {len(unknown_specs)} fully-unknown "
           f"(customer, pincode, courier) triples via get_adhoc_investigation() ...")
     n_adh, conf_adh, viol_adh = run_population(data, "unknown_triples", unknown_iter())
     print(f"      checked: {n_adh}   violations: {len(viol_adh)}")
 
-    total_checked = n_real + n_bnd + n_adh
-    all_violations = viol_real + viol_bnd + viol_adh
+    # ------------------------------------------------------------
+    # Population 4: adversarial, genuinely malformed live-curveball input
+    # ------------------------------------------------------------
+    adversarial_specs = build_adversarial_cases()
+    print(f"\n[4/4] Running get_adhoc_investigation() -> decide() against "
+          f"{len(adversarial_specs)} adversarial (malformed) inputs ...")
+    n_adv, conf_adv, viol_adv = run_adversarial_population(data, "adversarial", adversarial_specs)
+    print(f"      checked: {n_adv}   violations: {len(viol_adv)}")
+
+    total_checked = n_real + n_bnd + n_adh + n_adv
+    all_violations = viol_real + viol_bnd + viol_adh + viol_adv
 
     # ------------------------------------------------------------
     # Invariant 7: global confidence-ordering sanity check
     # ------------------------------------------------------------
-    all_confidences = merge_confidence_maps(conf_real, conf_bnd, conf_adh)
+    all_confidences = merge_confidence_maps(conf_real, conf_bnd, conf_adh, conf_adv)
     inv7_msg = check_invariant_7_confidence_ordering(all_confidences)
     if inv7_msg:
         all_violations.append({
@@ -599,6 +716,7 @@ def main():
     print(f"  - real orders (orders.csv) : {n_real}")
     print(f"  - synthetic boundary cases : {n_bnd}")
     print(f"  - unknown-triple cases     : {n_adh}")
+    print(f"  - adversarial/malformed    : {n_adv}")
 
     decision_counts: Dict[str, int] = {}
     for k, v in all_confidences.items():
@@ -635,7 +753,7 @@ def main():
     else:
         print(f"ACCEPTANCE CHECK: PASS - zero invariant violations across "
               f"{total_checked} investigations "
-              f"({n_real} real orders + {n_bnd + n_adh} synthetic edge cases).")
+              f"({n_real} real orders + {n_bnd + n_adh + n_adv} synthetic/adversarial edge cases).")
     print("=" * 70)
 
     return 1 if all_violations else 0

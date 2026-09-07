@@ -46,6 +46,10 @@ class DecisionResult(BaseModel):
     decision: Decision
     risk_level: RiskLevel
     confidence: float
+    # Short, concrete reasons behind `confidence` (sample sizes,
+    # verification, flag counts) - see compute_confidence(). Lets a UI
+    # show why the number is what it is, not just the number itself.
+    confidence_factors: List[str]
     reason: str
     supporting_evidence: List[str]
     counter_evidence: List[str]
@@ -179,7 +183,9 @@ def blocking_flags(flags: List[str]) -> List[str]:
     return [f for f in flags if not f.startswith("INFO: ")]
 
 
-def compute_confidence(investigation, decision: Decision, flags: List[str]) -> float:
+def compute_confidence(
+    investigation, decision: Decision, flags: List[str]
+) -> "tuple[float, List[str]]":
     """
     Confidence in the call actually made, derived from the evidence
     behind it - not a fixed constant per decision branch. Bands per
@@ -187,29 +193,56 @@ def compute_confidence(investigation, decision: Decision, flags: List[str]) -> f
     so a hedged call never reads as more confident than a clean,
     verified one - see stress_test.py invariant 7, which checks this
     globally across every investigation run.
+
+    Returns (confidence, factors): factors is a short list of the
+    concrete reasons behind the number (sample sizes, verification,
+    flag counts), so a UI showing "75%" can also show *why* 75% rather
+    than asking a viewer to trust a bare percentage - see
+    InvestigationReport.confidence_factors.
     """
 
     quality = investigation["data_quality"]
-    warning_penalty = min(0.15, 0.03 * len(quality.get("warnings", [])))
+    warnings = quality.get("warnings", [])
+    warning_penalty = min(0.15, 0.03 * len(warnings))
 
     cp = investigation["courier_pincode"]
     customer = investigation["customer"]
 
-    def sample_score(signal) -> float:
-        if not signal.get("found"):
+    # Courier x pincode/courier/pincode signals count their track record
+    # as "sample_size"; the customer signal counts it as "previous_orders"
+    # instead (see analytics.get_customer_signal) - sample_score/
+    # sample_label take the count explicitly rather than assuming a
+    # single shared key name, so customer history is never silently
+    # scored as zero regardless of how established the customer is.
+    def sample_score(found: bool, count) -> float:
+        if not found or count is None or pd.isna(count):
             return 0.0
-        n = signal.get("sample_size")
-        if n is None or pd.isna(n):
-            return 0.0
-        if n >= 50:
+        if count >= 50:
             return 1.0
-        if n >= 20:
+        if count >= 20:
             return 0.7
-        if n >= 5:
+        if count >= 5:
             return 0.35
         return 0.1
 
-    sample_avg = (sample_score(cp) + sample_score(customer)) / 2
+    def sample_label(name: str, found: bool, count) -> str:
+        if not found or count is None or pd.isna(count):
+            return f"{name}: no track record"
+        count = int(count)
+        if count >= 50:
+            return f"{name}: strong sample (n={count})"
+        if count >= 20:
+            return f"{name}: moderate sample (n={count})"
+        if count >= 5:
+            return f"{name}: thin sample (n={count})"
+        return f"{name}: very thin sample (n={count})"
+
+    cp_found, cp_count = cp.get("found"), cp.get("sample_size")
+    customer_found, customer_count = customer.get("found"), customer.get("previous_orders")
+
+    sample_avg = (
+        sample_score(cp_found, cp_count) + sample_score(customer_found, customer_count)
+    ) / 2
 
     if decision == "ESCALATE":
         low, high = 0.15, 0.45
@@ -219,23 +252,53 @@ def compute_confidence(investigation, decision: Decision, flags: List[str]) -> f
         # blocking "INFO: " flags (e.g. a new customer) don't count here
         # - they didn't cause the escalation, so they shouldn't inflate
         # confidence in it either.
-        strength = min(1.0, len(blocking_flags(flags)) / 4)
-        return round(low + (high - low) * strength, 2)
+        blocking = blocking_flags(flags)
+        strength = min(1.0, len(blocking) / 4)
+        confidence = round(low + (high - low) * strength, 2)
+        factors = [
+            f"{len(blocking)} of 4 blocking uncertainty flags present"
+            if blocking
+            else "No blocking flags, but critical data was missing"
+        ]
+        return confidence, factors
 
     if decision == "HOLD_FOR_VERIFICATION":
         low, high = 0.45, 0.80
         conf = low + (high - low) * sample_avg - warning_penalty
-        return round(max(low, min(high, conf)), 2)
+        confidence = round(max(low, min(high, conf)), 2)
+        factors = [
+            sample_label("Courier x pincode", cp_found, cp_count),
+            sample_label("Customer", customer_found, customer_count),
+        ]
+        if warnings:
+            factors.append(
+                f"{len(warnings)} data-quality warning{'s' if len(warnings) != 1 else ''} reduced confidence"
+            )
+        return confidence, factors
 
     # RELEASE
     low, high = 0.70, 0.95
     verified_bonus = 0.0
+    bonus_notes = []
     if customer.get("phone_verified") is True:
         verified_bonus += 0.05
+        bonus_notes.append("phone verified")
     if customer.get("address_verified") is True:
         verified_bonus += 0.05
+        bonus_notes.append("address verified")
     conf = low + (high - low) * sample_avg + verified_bonus - warning_penalty
-    return round(max(low, min(high, conf)), 2)
+    confidence = round(max(low, min(high, conf)), 2)
+    factors = [
+        sample_label("Courier x pincode", cp_found, cp_count),
+        sample_label("Customer", customer_found, customer_count),
+    ]
+    if bonus_notes:
+        factors.append("Verified: " + ", ".join(bonus_notes))
+    if warnings:
+        factors.append(
+            f"{len(warnings)} data-quality warning{'s' if len(warnings) != 1 else ''} reduced confidence"
+        )
+    return confidence, factors
 
 
 def context_disruption_notes(investigation) -> List[str]:
@@ -278,7 +341,7 @@ def decide(data, investigation) -> DecisionResult:
     evidence_sufficient = len(blocking_flags(flags)) == 0
 
     def result(decision, reason) -> DecisionResult:
-        confidence = compute_confidence(investigation, decision, flags)
+        confidence, confidence_factors = compute_confidence(investigation, decision, flags)
         logger.info(
             "order=%s decision=%s risk=%s confidence=%.2f flags=%d",
             order["order_id"], decision, risk, confidence, len(flags),
@@ -288,6 +351,7 @@ def decide(data, investigation) -> DecisionResult:
             decision=decision,
             risk_level=risk,
             confidence=confidence,
+            confidence_factors=confidence_factors,
             reason=reason,
             supporting_evidence=supporting,
             counter_evidence=counter,

@@ -42,6 +42,44 @@ class OperationalInsight(BaseModel):
     sample_size: int
     possible_cause: Optional[str] = None  # from events table, if any
     recommended_action: str               # template-generated, not an LLM call
+    estimated_impact: Optional[str] = None  # None for LOW_SAMPLE - see _estimate_impact()
+
+
+# Per-failed-COD-order cost the challenge brief itself cites (ShipPrime
+# research, 2026: wasted shipping + reverse logistics + blocked
+# inventory) - reused here rather than inventing a new figure, so the
+# impact estimate stays traceable to the same source the brief already
+# grounds the business case in.
+COST_PER_FAILED_ORDER_LOW = 180
+COST_PER_FAILED_ORDER_HIGH = 240
+
+
+def _estimate_impact(delta: float, sample_size: int) -> Optional[str]:
+    """
+    Rough rupee-impact estimate for a HIGH/MEDIUM finding: the excess
+    RTO rate (delta = 7d rate - 30d baseline) applied to this lane's own
+    recorded order volume (sample_size) - the best available proxy for
+    "how many orders like this has the lane actually seen", not a
+    monthly-volume projection (no such figure exists in this dataset).
+
+    Deliberately NOT called for LOW_SAMPLE findings (see
+    get_operational_insights()) - putting a rupee figure on a rate that
+    isn't statistically trustworthy would be exactly the overclaiming
+    this project's whole design is built to avoid.
+    """
+    excess_orders = delta * sample_size
+    if excess_orders <= 0:
+        return None
+
+    low = round(excess_orders * COST_PER_FAILED_ORDER_LOW)
+    high = round(excess_orders * COST_PER_FAILED_ORDER_HIGH)
+
+    return (
+        f"Est. impact: Rs {low:,}-{high:,} "
+        f"(~{excess_orders:.1f} excess RTO orders x Rs {COST_PER_FAILED_ORDER_LOW}"
+        f"-{COST_PER_FAILED_ORDER_HIGH}/order, per the challenge brief's cited "
+        "industry figures)"
+    )
 
 
 # ============================================================
@@ -206,6 +244,11 @@ def get_operational_insights(
                     rto_7d,
                     rto_30d,
                     sample_size,
+                ),
+                estimated_impact=(
+                    _estimate_impact(delta, sample_size)
+                    if severity != "LOW_SAMPLE"
+                    else None
                 ),
             )
         except (ValidationError, ValueError, TypeError) as exc:
