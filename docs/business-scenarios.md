@@ -119,8 +119,11 @@ it's actually their own malformed request.
 address for this one specific order, overriding what's on file for the
 customer generally — e.g. the customer moved and this delivery is to a new,
 not-yet-verified address.
-**Input:** Ad-hoc order for `CUST-005` (on-file `address_verified=True`)
-with the form's "Address verified?" set explicitly to **No**.
+**Input:** `POST /investigate` for `CUST-005` (on-file `address_verified=True`)
+with `address_verified: false` in the request body. The ad-hoc form's
+"Advanced fields" section that used to expose this was removed (a
+deliberate product simplification); the override itself is still a real,
+working backend capability, reachable via the API directly.
 **Expected:** Counter-evidence panel does *not* list "Address is verified"
 for this submission — proving the override, not the stored profile, drove
 the evidence.
