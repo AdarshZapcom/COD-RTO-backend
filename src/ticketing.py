@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import logging
 import os
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 import psycopg2
 import psycopg2.extras
@@ -66,8 +66,14 @@ CREATE TABLE IF NOT EXISTS escalation_tickets (
     status               text DEFAULT 'OPEN',   -- OPEN | RESOLVED
     resolved_by          text,
     resolution_note      text,
+    resolution_outcome   text,             -- VERIFIED_RELEASE | RISKY_BLOCK_COD | ESCALATE_MANAGER
     resolved_at          timestamptz
 );
+
+-- Added after escalation_tickets already existed in deployed
+-- environments - ADD COLUMN IF NOT EXISTS instead of relying on the
+-- CREATE TABLE above (which only ever runs for a brand-new table).
+ALTER TABLE escalation_tickets ADD COLUMN IF NOT EXISTS resolution_outcome text;
 
 -- No FK from order_id to orders(order_id): an ad hoc investigation's
 -- order_id (synthetic "ADHOC-<timestamp>") never exists in `orders`,
@@ -76,6 +82,17 @@ CREATE TABLE IF NOT EXISTS escalation_tickets (
 -- ad hoc orders existed - IF EXISTS keeps this safe to rerun against
 -- a table that never had the constraint.
 ALTER TABLE escalation_tickets DROP CONSTRAINT IF EXISTS escalation_tickets_order_id_fkey;
+
+-- list_tickets()/count_tickets() always filter WHERE status = %s, then
+-- (for list_tickets) sort by created_at or resolved_at - without these,
+-- a status with many rows (e.g. RESOLVED, which only grows) forces a
+-- full-table sequential scan + sort on every call. Measured live: a
+-- RESOLVED page took ~2.5s against a table with a few thousand rows
+-- before these existed, most of it exactly this scan/sort.
+CREATE INDEX IF NOT EXISTS idx_escalation_tickets_status_created
+    ON escalation_tickets (status, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_escalation_tickets_status_resolved
+    ON escalation_tickets (status, resolved_at DESC);
 """
 
 
@@ -166,52 +183,62 @@ def create_ticket(report: "InvestigationReport") -> Optional[str]:
     return ticket_id
 
 
-def list_open_tickets(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
+def list_tickets(status: str = "OPEN", limit: int = 50, offset: int = 0) -> Tuple[List[Dict[str, Any]], int]:
     """
-    OPEN tickets, most recently created first, paginated.
+    Tickets in the given status, paginated, plus the total count for
+    that status (for real numbered pagination in the UI, not just an
+    infinite "load more" that never tells the operator how much is
+    actually left) - OPEN ones most recently created first, RESOLVED
+    ones most recently resolved first (an operator reviewing history
+    cares about "what did I just close", not insertion order).
+
+    One connection for both queries, not two: this used to be
+    list_open_tickets()/count_open_tickets() as two separate functions,
+    each opening its own connection - against the remote Supabase
+    Postgres this app talks to, connection setup (not query execution;
+    both queries are index-backed and fast) turned out to be the
+    dominant cost, measured live at ~2.3s total for what should be a
+    sub-second fetch. Halving the connection count roughly halves it.
+
+    `status` is validated by the caller (see api.get_tickets) against a
+    fixed allowlist, never interpolated directly into SQL.
 
     Added because a live event/stress-test run can accumulate hundreds
     of ad hoc tickets - rendering all of them unpaginated in the ops
     view is a real live-demo scroll/perf risk, not just a cosmetic
     concern. Defaults (limit=50) match GET /orders' own default so the
-    two paginated lists behave consistently.
+    paginated lists behave consistently.
     """
+    order_column = "resolved_at" if status == "RESOLVED" else "created_at"
     conn = _get_conn()
     try:
+        with conn.cursor() as count_cur:
+            count_cur.execute("SELECT COUNT(*) FROM escalation_tickets WHERE status = %s", (status,))
+            (total,) = count_cur.fetchone()
+
         with conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor) as cur:
             cur.execute(
                 "SELECT * FROM escalation_tickets "
-                "WHERE status = 'OPEN' "
-                "ORDER BY created_at DESC "
+                "WHERE status = %s "
+                f"ORDER BY {order_column} DESC "
                 "LIMIT %s OFFSET %s",
-                (limit, offset),
+                (status, limit, offset),
             )
             rows = cur.fetchall()
-        return [dict(row) for row in rows]
+        return [dict(row) for row in rows], total
     finally:
         conn.close()
 
 
-def count_open_tickets() -> int:
+def resolve_ticket(ticket_id: str, resolved_by: str, resolution_note: str, resolution_outcome: str) -> bool:
     """
-    Total OPEN ticket count, independent of any page's limit/offset -
-    lets a caller (see api.get_tickets) compute total page count for
-    real numbered pagination in the UI, not just an infinite "load
-    more" that never tells the operator how much is actually left.
-    """
-    conn = _get_conn()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) FROM escalation_tickets WHERE status = 'OPEN'")
-            (count,) = cur.fetchone()
-        return count
-    finally:
-        conn.close()
+    Mark a ticket RESOLVED with who closed it, why, and what actually
+    happened to the order (resolution_outcome - VERIFIED_RELEASE |
+    RISKY_BLOCK_COD | ESCALATE_MANAGER).
 
-
-def resolve_ticket(ticket_id: str, resolved_by: str, resolution_note: str) -> bool:
-    """
-    Mark a ticket RESOLVED with who closed it and why.
+    resolution_outcome is validated by the caller (see
+    api.post_ticket_resolve) against a fixed allowlist, same convention
+    as list_tickets' `status` - this function trusts it.
 
     Returns True if a ticket with this id existed and was updated,
     False if no row matched ticket_id - lets a caller (e.g. the API
@@ -227,15 +254,16 @@ def resolve_ticket(ticket_id: str, resolved_by: str, resolution_note: str) -> bo
                 SET status = 'RESOLVED',
                     resolved_by = %s,
                     resolution_note = %s,
+                    resolution_outcome = %s,
                     resolved_at = now()
                 WHERE ticket_id = %s
                 """,
-                (resolved_by, resolution_note, ticket_id),
+                (resolved_by, resolution_note, resolution_outcome, ticket_id),
             )
             updated = cur.rowcount > 0
         conn.commit()
         if updated:
-            logger.info("ticket %s resolved by %s", ticket_id, resolved_by)
+            logger.info("ticket %s resolved by %s (%s)", ticket_id, resolved_by, resolution_outcome)
         else:
             logger.warning("resolve attempted for unknown ticket %s", ticket_id)
         return updated
