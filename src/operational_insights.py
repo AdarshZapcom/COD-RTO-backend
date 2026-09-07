@@ -25,6 +25,8 @@ from typing import List, Literal, Optional
 import pandas as pd
 from pydantic import BaseModel, ValidationError
 
+from analytics import humanize_label
+
 logger = logging.getLogger(__name__)
 
 Severity = Literal["HIGH", "MEDIUM", "LOW_SAMPLE"]
@@ -69,7 +71,7 @@ def _possible_cause(events: pd.DataFrame, pincode: str, courier_id: str) -> Opti
         return None
 
     descriptions = [
-        f"{row.get('event_type')} on {row.get('date')} "
+        f"{humanize_label(row.get('event_type'))} on {row.get('date')} "
         f"({row.get('severity')} severity): {row.get('description')}"
         for _, row in matches.iterrows()
     ]
@@ -90,19 +92,21 @@ def _recommended_action(
     sample_size: int,
 ) -> str:
 
+    order_word = "order" if sample_size == 1 else "orders"
+
     if severity == "LOW_SAMPLE":
         return (
             f"Courier {courier_id} shows a {rto_rate_7d:.0%} recent RTO rate "
-            f"in pincode {pincode} vs {rto_rate_30d:.0%} baseline, but on "
-            f"only n={sample_size} orders - too small a sample to confirm a "
+            f"in pincode {pincode} vs {rto_rate_30d:.0%} baseline, but based on "
+            f"only {sample_size} past {order_word} - too small a sample to confirm a "
             "real pattern. Monitor before taking action."
         )
 
     return (
         f"Courier {courier_id} is deteriorating specifically in pincode "
         f"{pincode} ({rto_rate_7d:.0%} vs {rto_rate_30d:.0%} baseline, "
-        f"n={sample_size}). Consider rerouting new orders in this pincode "
-        "to an alternate courier."
+        f"based on {sample_size} past {order_word}). Consider rerouting new orders "
+        "in this pincode to an alternate courier."
     )
 
 

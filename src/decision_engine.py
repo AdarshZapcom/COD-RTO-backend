@@ -25,7 +25,14 @@ from typing import List, Literal
 import pandas as pd
 from pydantic import BaseModel
 
-from analytics import load_data, get_order_investigation, is_true, normalize_id, normalize_pincode
+from analytics import (
+    load_data,
+    get_order_investigation,
+    is_true,
+    normalize_id,
+    normalize_pincode,
+    humanize_label,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -116,6 +123,14 @@ def compute_uncertainty_flags(data, investigation) -> List[str]:
     automated call, independent of whether that call would lean
     RELEASE or HOLD. These are what should push a case to a human,
     not the presence of risk itself.
+
+    Flags prefixed "INFO: " are surfaced and still count against
+    confidence, but do NOT by themselves force ESCALATE - see
+    blocking_flags() below. Right now the only such flag is "customer
+    is new": a brand-new customer is common, not a rare gap, so it
+    shouldn't alone route every first-time buyer to a human reviewer
+    the same way a missing pincode/courier/lane does (see
+    analytics.check_data_quality's matching special case).
     """
 
     flags: List[str] = []
@@ -131,15 +146,20 @@ def compute_uncertainty_flags(data, investigation) -> List[str]:
         and pd.notna(cp.get("sample_size"))
         and cp["sample_size"] < MIN_COURIER_PINCODE_SAMPLE
     ):
+        n = int(cp["sample_size"])
         flags.append(
             f"Courier x pincode sample size is very small "
-            f"(n={int(cp['sample_size'])})"
+            f"(based on only {n} past order{'s' if n != 1 else ''})"
         )
 
     customer = investigation["customer"]
-    if (
-        customer.get("found")
-        and pd.notna(customer.get("previous_orders"))
+    if not customer.get("found"):
+        flags.append(
+            "INFO: customer is new (no order history) - weighed via "
+            "pincode/courier/lane signals instead of blocking outright"
+        )
+    elif (
+        pd.notna(customer.get("previous_orders"))
         and customer["previous_orders"] < MIN_CUSTOMER_ORDER_HISTORY
     ):
         flags.append(
@@ -154,6 +174,16 @@ def compute_uncertainty_flags(data, investigation) -> List[str]:
         )
 
     return flags
+
+
+def blocking_flags(flags: List[str]) -> List[str]:
+    """
+    The subset of compute_uncertainty_flags() that should actually force
+    ESCALATE - everything except "INFO: " flags, which are surfaced and
+    still cost some confidence but are not, on their own, a reason to
+    refuse a decision (currently: a brand-new customer alone).
+    """
+    return [f for f in flags if not f.startswith("INFO: ")]
 
 
 def compute_confidence(investigation, decision: Decision, flags: List[str]) -> float:
@@ -190,10 +220,13 @@ def compute_confidence(investigation, decision: Decision, flags: List[str]) -> f
 
     if decision == "ESCALATE":
         low, high = 0.15, 0.45
-        # More/stronger uncertainty flags make ESCALATE itself a
+        # More/stronger *blocking* flags make ESCALATE itself a
         # clearer-cut call, not a wilder guess - confidence rises with
-        # the flag count within this band, capped at 4 flags.
-        strength = min(1.0, len(flags) / 4)
+        # the flag count within this band, capped at 4 flags. Non-
+        # blocking "INFO: " flags (e.g. a new customer) don't count here
+        # - they didn't cause the escalation, so they shouldn't inflate
+        # confidence in it either.
+        strength = min(1.0, len(blocking_flags(flags)) / 4)
         return round(low + (high - low) * strength, 2)
 
     if decision == "HOLD_FOR_VERIFICATION":
@@ -224,7 +257,7 @@ def context_disruption_notes(investigation) -> List[str]:
     for event in investigation.get("context_events", []):
         if event.get("severity") in ("HIGH", "MEDIUM"):
             notes.append(
-                f"Documented {event.get('event_type')} on "
+                f"Documented {humanize_label(event.get('event_type'))} on "
                 f"{event.get('date')} ({event.get('severity')} severity) "
                 "may explain part of the recent dip"
             )
@@ -249,7 +282,9 @@ def decide(data, investigation) -> DecisionResult:
 
     risk = compute_risk_level(investigation)
     flags = compute_uncertainty_flags(data, investigation)
-    evidence_sufficient = len(flags) == 0
+    # A brand-new customer alone ("INFO: " flag) doesn't count against
+    # sufficiency - see blocking_flags(). Everything else still does.
+    evidence_sufficient = len(blocking_flags(flags)) == 0
 
     def result(decision, reason) -> DecisionResult:
         confidence = compute_confidence(investigation, decision, flags)
@@ -338,8 +373,9 @@ def decide(data, investigation) -> DecisionResult:
         return result(
             "ESCALATE",
             "Not enough reliable track record to make a confident "
-            "automated call (" + "; ".join(flags) + ") - this needs a "
-            "human, independent of whether the order itself looks risky.",
+            "automated call (" + "; ".join(blocking_flags(flags)) + ") - "
+            "this needs a human, independent of whether the order itself "
+            "looks risky.",
         )
 
     # ------------------------------------------------------

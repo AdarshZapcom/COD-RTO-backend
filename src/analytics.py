@@ -17,6 +17,29 @@ DATA_DIR = os.path.join(
     "generated"
 )
 
+
+# ============================================================
+# TEXT FORMATTING
+# ============================================================
+
+def humanize_label(value) -> str:
+    """
+    Convert a SCREAMING_SNAKE_CASE constant (event_type, decision, etc.)
+    into human-readable text for display, e.g. "HEAVY_RAIN" -> "Heavy
+    rain", "HOLD_FOR_VERIFICATION" -> "Hold for verification". Any
+    narrative text built for a human reviewer should pass enum-like
+    fields through this rather than interpolating them raw - a jury
+    member reading "COURIER_DISRUPTION" in a sentence reads as an
+    unfinished template, not a considered explanation.
+
+    Deliberately NOT used for acronym-like codes (e.g. "RTO") that would
+    be mangled by naive capitalization - only for constants that are
+    genuinely underscore-joined ordinary words.
+    """
+    if not value or not isinstance(value, str):
+        return ""
+    return value.replace("_", " ").capitalize()
+
 # ============================================================
 # SIGNAL THRESHOLDS
 #
@@ -420,9 +443,27 @@ def check_data_quality(
     for name, signal in signals:
 
         if not signal.get("found", False):
-            issues.append(
-                f"{name}: data not available"
-            )
+            if name == "customer":
+                # A brand-new customer (no id in customers.csv at all) is
+                # the norm, not a rare gap - a real COD platform sees
+                # thousands of genuine first-time buyers a day. Treating
+                # it as a hard, unconditional escalation trigger - the
+                # same way a missing pincode or missing courier is,
+                # both genuinely rare since those universes are small
+                # and slow-changing - would route a huge fraction of
+                # first-time-buyer volume to a human reviewer for no
+                # proportionate benefit. It's still a real gap worth
+                # surfacing (a warning, and a small confidence penalty -
+                # see decision_engine.compute_confidence), just not one
+                # that should block automatically on its own; the other
+                # three dimensions' signals carry the decision instead.
+                warnings.append(
+                    f"{name}: no order history (new customer)"
+                )
+            else:
+                issues.append(
+                    f"{name}: data not available"
+                )
             continue
 
         if signal.get("data_quality") == "MISSING":
