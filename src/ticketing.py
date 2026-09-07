@@ -192,6 +192,23 @@ def list_open_tickets(limit: int = 50, offset: int = 0) -> List[Dict[str, Any]]:
         conn.close()
 
 
+def count_open_tickets() -> int:
+    """
+    Total OPEN ticket count, independent of any page's limit/offset -
+    lets a caller (see api.get_tickets) compute total page count for
+    real numbered pagination in the UI, not just an infinite "load
+    more" that never tells the operator how much is actually left.
+    """
+    conn = _get_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) FROM escalation_tickets WHERE status = 'OPEN'")
+            (count,) = cur.fetchone()
+        return count
+    finally:
+        conn.close()
+
+
 def resolve_ticket(ticket_id: str, resolved_by: str, resolution_note: str) -> bool:
     """
     Mark a ticket RESOLVED with who closed it and why.

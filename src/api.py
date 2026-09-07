@@ -42,7 +42,7 @@ from typing import Any, Dict, List, Optional
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request, Response
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
@@ -53,7 +53,7 @@ from analytics import load_data
 from case_memory import warm_embedding_model
 from investigation_agent import InvestigationReport, investigate_adhoc, investigate_order
 from operational_insights import OperationalInsight, get_operational_insights
-from ticketing import list_open_tickets, resolve_ticket
+from ticketing import count_open_tickets, list_open_tickets, resolve_ticket
 
 # Configures the root logger once, at the actual process entry point -
 # every other module's `logging.getLogger(__name__)` propagates here,
@@ -91,6 +91,11 @@ app.add_middleware(
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
+    # allow_headers governs REQUEST headers the browser may send; a
+    # custom RESPONSE header (X-Total-Count, for GET /tickets'
+    # pagination) is invisible to client-side JS unless explicitly
+    # exposed here - allow_headers="*" does not cover this direction.
+    expose_headers=["X-Total-Count"],
 )
 
 
@@ -381,6 +386,7 @@ def get_insights(
 
 @app.get("/tickets", response_model=List[Dict[str, Any]])
 def get_tickets(
+    response: Response,
     status: str = Query("OPEN"),
     limit: int = Query(50, ge=1, le=500),
     offset: int = Query(0, ge=0),
@@ -392,6 +398,13 @@ def get_tickets(
             detail="Only status=OPEN is supported.",
         )
     try:
+        # X-Total-Count (not a body-shape change) lets the frontend render
+        # real numbered pagination (page 1/2/3...) instead of an infinite
+        # "load more" that never tells an operator how much is left -
+        # the response body stays a plain array, matching every other
+        # list endpoint here.
+        total = count_open_tickets()
+        response.headers["X-Total-Count"] = str(total)
         return list_open_tickets(limit=limit, offset=offset)
     except Exception:
         logger.exception("GET /tickets failed")
