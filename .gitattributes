@@ -1,0 +1,7 @@
+# Force LF line endings for all text files regardless of which git
+# client (Windows git-bash with autocrlf=true, or WSL git with no
+# autocrlf set) last checked them out - without this, the two clients
+# fight over CRLF vs LF on every checkout, showing every touched file
+# as "modified" with insertions == deletions == its total line count
+# (pure line-ending noise, not real content changes).
+* text=auto eol=lf
