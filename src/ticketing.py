@@ -66,8 +66,14 @@ CREATE TABLE IF NOT EXISTS escalation_tickets (
     status               text DEFAULT 'OPEN',   -- OPEN | RESOLVED
     resolved_by          text,
     resolution_note      text,
+    resolution_outcome   text,             -- VERIFIED_RELEASE | RISKY_BLOCK_COD | ESCALATE_MANAGER
     resolved_at          timestamptz
 );
+
+-- Added after escalation_tickets already existed in deployed
+-- environments - ADD COLUMN IF NOT EXISTS instead of relying on the
+-- CREATE TABLE above (which only ever runs for a brand-new table).
+ALTER TABLE escalation_tickets ADD COLUMN IF NOT EXISTS resolution_outcome text;
 
 -- No FK from order_id to orders(order_id): an ad hoc investigation's
 -- order_id (synthetic "ADHOC-<timestamp>") never exists in `orders`,
@@ -224,9 +230,15 @@ def list_tickets(status: str = "OPEN", limit: int = 50, offset: int = 0) -> Tupl
         conn.close()
 
 
-def resolve_ticket(ticket_id: str, resolved_by: str, resolution_note: str) -> bool:
+def resolve_ticket(ticket_id: str, resolved_by: str, resolution_note: str, resolution_outcome: str) -> bool:
     """
-    Mark a ticket RESOLVED with who closed it and why.
+    Mark a ticket RESOLVED with who closed it, why, and what actually
+    happened to the order (resolution_outcome - VERIFIED_RELEASE |
+    RISKY_BLOCK_COD | ESCALATE_MANAGER).
+
+    resolution_outcome is validated by the caller (see
+    api.post_ticket_resolve) against a fixed allowlist, same convention
+    as list_tickets' `status` - this function trusts it.
 
     Returns True if a ticket with this id existed and was updated,
     False if no row matched ticket_id - lets a caller (e.g. the API
@@ -242,15 +254,16 @@ def resolve_ticket(ticket_id: str, resolved_by: str, resolution_note: str) -> bo
                 SET status = 'RESOLVED',
                     resolved_by = %s,
                     resolution_note = %s,
+                    resolution_outcome = %s,
                     resolved_at = now()
                 WHERE ticket_id = %s
                 """,
-                (resolved_by, resolution_note, ticket_id),
+                (resolved_by, resolution_note, resolution_outcome, ticket_id),
             )
             updated = cur.rowcount > 0
         conn.commit()
         if updated:
-            logger.info("ticket %s resolved by %s", ticket_id, resolved_by)
+            logger.info("ticket %s resolved by %s (%s)", ticket_id, resolved_by, resolution_outcome)
         else:
             logger.warning("resolve attempted for unknown ticket %s", ticket_id)
         return updated

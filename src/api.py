@@ -274,9 +274,17 @@ class AdhocOrderRequest(BaseModel):
         return value
 
 
+# The three real ops outcomes for a HOLD/ESCALATE ticket, tied to the
+# actual question being answered (ship this order COD or not) rather
+# than a generic status list - see get_tickets' `status` allowlist for
+# the same validate-in-the-API-layer convention.
+RESOLUTION_OUTCOMES = ("VERIFIED_RELEASE", "RISKY_BLOCK_COD", "ESCALATE_MANAGER")
+
+
 class TicketResolveRequest(BaseModel):
     resolved_by: str = Field(..., min_length=1)
     resolution_note: str = Field(..., min_length=1)
+    resolution_outcome: str = Field(..., min_length=1)
 
 
 class TicketResolveResponse(BaseModel):
@@ -284,6 +292,7 @@ class TicketResolveResponse(BaseModel):
     status: str = "RESOLVED"
     resolved_by: str
     resolution_note: str
+    resolution_outcome: str
 
 
 # ============================================================
@@ -425,8 +434,13 @@ def get_tickets(
 @app.post("/tickets/{ticket_id}/resolve", response_model=TicketResolveResponse)
 def post_ticket_resolve(ticket_id: str, body: TicketResolveRequest):
     _reject_control_chars(ticket_id, "ticket_id")
+    if body.resolution_outcome not in RESOLUTION_OUTCOMES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"resolution_outcome must be one of: {', '.join(RESOLUTION_OUTCOMES)}",
+        )
     try:
-        found = resolve_ticket(ticket_id, body.resolved_by, body.resolution_note)
+        found = resolve_ticket(ticket_id, body.resolved_by, body.resolution_note, body.resolution_outcome)
     except Exception:
         logger.exception("POST /tickets/%s/resolve failed", ticket_id)
         raise HTTPException(status_code=503, detail="Ticketing store unavailable.")
@@ -438,4 +452,5 @@ def post_ticket_resolve(ticket_id: str, body: TicketResolveRequest):
         ticket_id=ticket_id,
         resolved_by=body.resolved_by,
         resolution_note=body.resolution_note,
+        resolution_outcome=body.resolution_outcome,
     )
