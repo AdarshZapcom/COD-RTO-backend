@@ -3,3 +3,7 @@ EVT-001,2026-08-30,560068,C07,HEAVY_RAIN,HIGH,Heavy rainfall caused delivery del
 EVT-002,2026-08-31,560068,C07,COURIER_DISRUPTION,MEDIUM,Temporary courier capacity issue affected delivery attempts.
 EVT-003,2026-08-20,560076,C02,LOCAL_EVENT,LOW,Local event caused temporary congestion.
 EVT-004,2026-08-15,560010,C04,WAREHOUSE_DELAY,MEDIUM,Warehouse processing delay temporarily increased delivery time.
+EVT-005,2026-08-25,560015,C03,FESTIVAL_SURGE,MEDIUM,Festival-season order surge temporarily strained delivery capacity.
+EVT-006,2026-08-18,560100,C01,ROAD_CLOSURE,LOW,Planned road maintenance caused minor delivery delays.
+EVT-007,2026-08-22,560005,C02,STRIKE,HIGH,Regional transport strike disrupted delivery operations for several days.
+EVT-008,2026-08-12,560017,C04,SORTING_FACILITY_ISSUE,MEDIUM,A sorting-facility outage temporarily delayed outbound shipments.
